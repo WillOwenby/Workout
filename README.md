@@ -16,7 +16,8 @@ It's a plain HTML/CSS/JS web app with no build step and no account. Your data st
   - Flags PRs, based on estimated 1-rep max.
 - **Diet** (MyFitnessPal-style food diary):
   - Search a built-in database of ~200 common foods, with calories and macros from USDA averages and real serving sizes. Log by servings, grams or ounces.
-  - Search **Open Food Facts** online for branded and packaged foods, or **scan a barcode** with your camera (or type the barcode number).
+  - Searching also checks two online databases automatically as you type: **USDA FoodData Central** (~400k US branded foods from manufacturer label data) and **Open Food Facts**. You can also **scan a barcode** with your camera, or type the barcode number.
+  - The shared USDA demo key allows about 30 searches an hour. For more, get a free key at https://fdc.nal.usda.gov/api-key-signup and paste it into **Plan → Settings**.
   - The **My foods** tab holds custom foods you create or save; **Recent** shows foods you've logged; one-tap **+** adds a food at your last amount.
   - **Save meal** stores a whole meal so you can re-add it in one tap. You can also use **Quick add** for calories only, or copy yesterday's food.
   - Shows Goal − Food = Remaining, macro bars, water, and a 7-day calorie chart with averages.
