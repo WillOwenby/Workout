@@ -787,6 +787,8 @@ function viewPlan() {
         ${field('Fat g', `<input type="number" data-in="setting" data-f="fatGoal" value="${esc(st.fatGoal)}">`)}
       </div>
       <p class="tiny muted" style="margin:0">Changing units only changes labels; existing numbers aren't converted.</p>
+      ${field('USDA food database key (optional)', `<input data-in="setting" data-f="usdaKey" value="${esc(st.usdaKey || '')}" placeholder="Uses shared demo key if blank" autocomplete="off" autocapitalize="off" spellcheck="false">`)}
+      <p class="tiny muted" style="margin:0">Online food search uses the free USDA database. The shared demo key allows only about 30 searches an hour. For more, get your own free key at <a href="https://fdc.nal.usda.gov/api-key-signup" target="_blank" rel="noopener">fdc.nal.usda.gov/api-key-signup</a> (takes a minute, sent by email) and paste it here.</p>
     </div>
   </details>
 
@@ -1139,7 +1141,7 @@ function onField(ev) {
     const k = keyOf(el.dataset.name);
     S.setup[k] = { ...(S.setup[k] || {}), [f || 'setting']: val };
   } else if (kind === 'setting') {
-    S.settings[f] = ['unit', 'programStart', 'goalWeight', 'autoRest'].includes(f) ? val : (num(val) ?? val);
+    S.settings[f] = ['unit', 'programStart', 'goalWeight', 'autoRest', 'usdaKey'].includes(f) ? val : (num(val) ?? val);
   } else if (kind === 'profile') {
     S.profile[f] = val;
   } else if (kind === 'goal-notes') {

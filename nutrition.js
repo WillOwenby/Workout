@@ -8,6 +8,7 @@
    ========================================================================= */
 
 const OFF_FIELDS = 'code,product_name,product_name_en,brands,serving_size,serving_quantity,nutriments';
+const SRC_LABEL = { off: 'Open Food Facts', usda: 'USDA' };
 const OZ = 28.3495;
 
 const dv = {
@@ -99,14 +100,26 @@ function weekTotals(endDate) {
   });
 }
 
-// ---------- Open Food Facts ----------
+// ---------- online food databases ----------
+// Two free sources, searched together:
+//  • USDA FoodData Central "Branded Foods": ~400k US packaged foods from manufacturer label data.
+//  • Open Food Facts: crowd-sourced, worldwide, strongest for barcodes.
+const USDA_URL = 'https://api.nal.usda.gov/fdc/v1/foods/search';
+const usdaKey = () => (S.settings.usdaKey || '').trim() || 'DEMO_KEY';
+const onlineCache = new Map(); // query -> { results, notes }
+
+const isShouting = (s) => s && s === s.toUpperCase() && /[A-Z]/.test(s);
+const titleCase = (s) => String(s || '').toLowerCase().replace(/(^|[\s\-/(&,])([a-z])/g, (m, a, b) => a + b.toUpperCase());
+const tidy = (s) => (isShouting(s) ? titleCase(s) : String(s || '')).replace(/\s+/g, ' ').trim();
+
 function offToFood(p) {
   const n = p.nutriments || {};
-  const name = (p.product_name || p.product_name_en || '').trim();
+  const name = tidy(p.product_name || p.product_name_en || '');
   if (!name) return null;
   const k100 = num(n['energy-kcal_100g']) ?? (num(n.energy_100g) != null ? num(n.energy_100g) / 4.184 : null);
   const sq = num(p.serving_quantity);
-  const base = { id: 'off' + (p.code || uid()), src: 'off', name, brand: (p.brands || '').split(',')[0].trim(), code: p.code || '' };
+  const brands = Array.isArray(p.brands) ? p.brands.join(',') : p.brands || '';
+  const base = { id: 'off' + (p.code || uid()), src: 'off', name, brand: tidy(brands.split(',')[0]), code: p.code || '' };
   const g = (key, per) => num(n[`${key}_${per}`]) || 0;
   if (k100 != null && sq > 0) {
     const k = sq / 100;
@@ -120,41 +133,120 @@ function offToFood(p) {
   }
   return null;
 }
+
+/** USDA branded search results list nutrients per 100 g; scale them to the label serving. */
+function usdaToFood(x) {
+  const name = tidy(x.description);
+  if (!name) return null;
+  const nut = (ids, nums) => {
+    const hit = (x.foodNutrients || []).find((n) => ids.includes(n.nutrientId) || nums.includes(String(n.nutrientNumber)));
+    if (!hit) return null;
+    const v = num(hit.value);
+    return v != null && /kj/i.test(hit.unitName || '') ? v / 4.184 : v;
+  };
+  const k100 = nut([1008, 2047, 2048], ['208', '957', '958']);
+  if (k100 == null) return null;
+  const p100 = nut([1003], ['203']) || 0, c100 = nut([1005], ['205']) || 0, f100 = nut([1004], ['204']) || 0;
+  const unitG = /^(g|gm|grm|ml|mlt)$/i.test(x.servingSizeUnit || '');
+  const grams = unitG && num(x.servingSize) > 0 ? num(x.servingSize) : null;
+  const house = tidy(x.householdServingFullText || '');
+  const base = { id: 'usda' + x.fdcId, src: 'usda', name, brand: tidy(x.brandName || x.brandOwner || ''), code: String(x.gtinUpc || '').replace(/^0+/, '') };
+  if (!grams) return { ...base, serving: '100 g', grams: 100, cal: Math.round(k100), p: r1(p100), c: r1(c100), f: r1(f100) };
+  const k = grams / 100;
+  return {
+    ...base, serving: house && !/^\d+(\.\d+)?\s*(g|ml)$/i.test(house) ? house : `${r1(grams)} g`, grams,
+    cal: Math.round(k100 * k), p: r1(p100 * k), c: r1(c100 * k), f: r1(f100 * k),
+  };
+}
+
+async function fetchJson(url, ms = 9000) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), ms);
+  try {
+    const res = await fetch(url, { signal: ctl.signal });
+    if (!res.ok) { const e = new Error('HTTP ' + res.status); e.status = res.status; throw e; }
+    return await res.json();
+  } finally { clearTimeout(t); }
+}
+async function searchUsda(q) {
+  const data = await fetchJson(`${USDA_URL}?api_key=${encodeURIComponent(usdaKey())}&query=${encodeURIComponent(q)}&dataType=Branded&pageSize=40`);
+  return (data.foods || []).map(usdaToFood).filter(Boolean);
+}
+async function searchOff(q) {
+  try {
+    // Newer Open Food Facts search engine: better ranking, matches brand + product name.
+    const data = await fetchJson(`https://search.openfoodfacts.org/search?q=${encodeURIComponent(q)}&page_size=30&langs=en&fields=${OFF_FIELDS}`);
+    return (data.hits || []).map(offToFood).filter(Boolean);
+  } catch (e) {
+    const data = await fetchJson(`https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=30&fields=${OFF_FIELDS}`, 12000);
+    return (data.products || []).map(offToFood).filter(Boolean);
+  }
+}
+
+/** Rank merged online results by how well brand + name match the words typed. */
+function rankOnline(q, foods) {
+  const toks = keyOf(q).split(/\s+/).filter(Boolean);
+  const seen = new Set();
+  return foods
+    .filter((f) => { const k = `${keyOf(f.brand)}${keyOf(f.name)}`.replace(/[^a-z0-9]/g, ''); if (seen.has(k)) return false; seen.add(k); return true; })
+    .map((f, i) => {
+      const hay = `${keyOf(f.brand)} ${keyOf(f.name)}`.replace(/[^a-z0-9 ]/g, ' ');
+      const words = hay.split(/\s+/);
+      const hit = toks.filter((t) => words.some((w) => w.startsWith(t.replace(/[^a-z0-9]/g, '')))).length;
+      return [hit / toks.length + (f.grams ? 0.05 : 0) - i / 10000, f];
+    })
+    .sort((a, b) => b[0] - a[0])
+    .map((x) => x[1])
+    .slice(0, 50);
+}
+
 async function searchOnline() {
   const q = dv.q.trim();
   if (q.length < 2) return;
-  dv.online = { q, status: 'loading', results: [] };
-  renderFoodResults();
-  try {
-    const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=30&sort_by=unique_scans_n&fields=${OFF_FIELDS}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(res.status);
-    const data = await res.json();
-    if (dv.online.q !== q) return;
-    dv.online = { q, status: 'done', results: (data.products || []).map(offToFood).filter(Boolean) };
-  } catch (e) {
-    if (dv.online.q === q) dv.online = { q, status: 'error', results: [] };
+  if (onlineCache.has(keyOf(q))) {
+    dv.online = { q, status: 'done', ...onlineCache.get(keyOf(q)) };
+    return renderFoodResults();
   }
+  dv.online = { q, status: 'loading', results: [], notes: [] };
+  renderFoodResults();
+  const [usda, off] = await Promise.allSettled([searchUsda(q), searchOff(q)]);
+  if (dv.online.q !== q) return; // user kept typing
+  const notes = [];
+  if (usda.status === 'rejected') {
+    notes.push(usda.reason?.status === 429 || usda.reason?.status === 403
+      ? 'USDA search limit reached. Add your free USDA key in Plan → Settings for more searches.'
+      : 'USDA database did not respond.');
+  }
+  if (off.status === 'rejected') notes.push('Open Food Facts did not respond.');
+  const merged = rankOnline(q, [...(usda.value || []), ...(off.value || [])]);
+  const failed = usda.status === 'rejected' && off.status === 'rejected';
+  dv.online = { q, status: failed ? 'error' : 'done', results: merged, notes };
+  if (!failed && !notes.length) onlineCache.set(keyOf(q), { results: merged, notes });
   if (dv.view === 'search') renderFoodResults();
 }
+
 async function lookupBarcode(code) {
   code = String(code || '').replace(/\D/g, '');
   if (code.length < 6) return toast('Enter the number under the barcode');
-  const mine = S.foods.find((f) => f.code === code);
+  const strip = (c) => String(c || '').replace(/^0+/, '');
+  const mine = S.foods.find((f) => f.code && strip(f.code) === strip(code));
   if (mine) return openDetail(mine);
   dv.scanStatus = `Looking up ${code}…`;
   const st = $('#scan-status'); if (st) st.textContent = dv.scanStatus;
+  let food = null;
   try {
-    const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=${OFF_FIELDS}`);
-    const data = await res.json();
-    const food = data && data.status === 1 && offToFood({ ...data.product, code });
-    if (!food) throw new Error('not found');
-    dv.scanStatus = '';
-    openDetail(food);
-  } catch (e) {
-    dv.scanStatus = `No match for ${code}. You can create it as a custom food.`;
-    if (dv.view === 'scan') render();
+    const data = await fetchJson(`https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=${OFF_FIELDS}`);
+    food = data && data.status === 1 && offToFood({ ...data.product, code });
+  } catch (e) { /* try USDA next */ }
+  if (!food) {
+    try {
+      const hits = await searchUsda(code);
+      food = hits.find((f) => strip(f.code) === strip(code) || strip(f.code).endsWith(strip(code)) || strip(code).endsWith(strip(f.code))) || null;
+    } catch (e) { /* not found */ }
   }
+  if (food) { dv.scanStatus = ''; openDetail(food); return; }
+  dv.scanStatus = `No match for ${code}. You can create it as a custom food.`;
+  if (dv.view === 'scan') render();
 }
 
 // ---------- barcode camera ----------
@@ -335,7 +427,7 @@ function viewFoodSearch() {
 }
 
 function foodRow(f, k) {
-  const badge = f.mine ? '<span class="tag">My food</span> ' : f.src === 'off' ? '<span class="tag">Online</span> ' : '';
+  const badge = f.mine ? '<span class="tag">My food</span> ' : SRC_LABEL[f.src] ? `<span class="tag">${SRC_LABEL[f.src]}</span> ` : '';
   return `<div class="list-item">
     <div class="grow tap" data-a="food-pick" data-k="${k}">
       <div class="ellipsis">${esc(f.name)}</div>
@@ -381,12 +473,13 @@ function foodResultsHtml() {
 
   if (dv.tab === 'all' && q.length >= 2) {
     const o = dv.online;
-    if (o.q !== q || o.status === 'idle') html += `<button class="btn block" data-a="food-online">Search online database for “${esc(q)}”</button>`;
-    else if (o.status === 'loading') html += '<div class="empty">Searching Open Food Facts…</div>';
-    else if (o.status === 'error') html += '<div class="empty">Online search failed. Check your connection and try again.</div><button class="btn block" data-a="food-online">Retry online search</button>';
-    else if (!o.results.length) html += '<div class="empty">No online matches. Try different words or create the food.</div>';
-    else html += `<div class="section-title">Online · Open Food Facts</div><div class="card">${o.results.map((f, k) => foodRow(f, list.length + k)).join('')}</div>
-      <p class="tiny muted">Online data is crowd-sourced. Double-check against the label.</p>`;
+    const notes = (o.notes || []).map((n) => `<p class="tiny muted" style="margin:4px 0">${esc(n)}</p>`).join('');
+    if (o.q !== q || o.status === 'idle') html += `<button class="btn block" data-a="food-online">Search brands & packaged foods for “${esc(q)}”</button>`;
+    else if (o.status === 'loading') html += '<div class="empty">Searching USDA and Open Food Facts…</div>';
+    else if (o.status === 'error') html += `<div class="empty">Online search failed. Check your connection and try again.</div>${notes}<button class="btn block" data-a="food-online">Retry online search</button>`;
+    else if (!o.results.length) html += `<div class="empty">No online matches. Try fewer words (e.g. brand + product), scan the barcode, or create the food.</div>${notes}`;
+    else html += `<div class="section-title">Brands & packaged foods</div><div class="card">${o.results.map((f, k) => foodRow(f, list.length + k)).join('')}</div>
+      ${notes}<p class="tiny muted">From USDA FoodData Central and Open Food Facts. Double-check against the label.</p>`;
   }
   return html;
 }
@@ -428,7 +521,7 @@ function viewFoodDetail() {
   <div class="row" style="margin-bottom:12px"><button class="icon-btn" data-a="detail-back" aria-label="Back">‹</button><b class="grow">${editIdx != null ? 'Edit entry' : 'Add food'}</b></div>
   <div class="card stack">
     <div><div class="ex-name">${esc(food.name)}</div>
-      <div class="small muted">${esc([food.brand, `${food.serving}${food.grams && !/\bg\b/.test(food.serving) ? ` (${r1(food.grams)} g)` : ''}`, food.src === 'off' ? 'Open Food Facts' : food.src === 'db' ? food.cat : ''].filter(Boolean).join(' · '))}</div></div>
+      <div class="small muted">${esc([food.brand, `${food.serving}${food.grams && !/\bg\b/.test(food.serving) ? ` (${r1(food.grams)} g)` : ''}`, SRC_LABEL[food.src] || (food.src === 'db' ? food.cat : '')].filter(Boolean).join(' · '))}</div></div>
     <div class="grid2">
       ${field('Amount', `<input id="fd-amt" type="number" inputmode="decimal" step="any" value="${esc(amt)}">`)}
       ${field('Unit', `<select id="fd-unit">${units.map(([v, l]) => `<option value="${v}" ${unit === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`)}
@@ -659,6 +752,8 @@ document.addEventListener('input', (ev) => {
     dv.q = t.value;
     dv.cat = null;
     renderFoodResults();
+    clearTimeout(searchOnline.timer);
+    if (dv.tab === 'all' && dv.q.trim().length >= 3) searchOnline.timer = setTimeout(searchOnline, 700);
   } else if (t.id === 'fd-amt' && dv.detail) {
     dv.detail.amt = t.value;
     $('#fd-preview').innerHTML = detailPreview();
@@ -676,7 +771,7 @@ document.addEventListener('change', (ev) => {
 });
 document.addEventListener('keydown', (ev) => {
   if (ev.key !== 'Enter') return;
-  if (ev.target.id === 'food-q') { ev.target.blur(); if (dv.tab === 'all' && !searchFoods(dv.q).length) searchOnline(); }
+  if (ev.target.id === 'food-q') { ev.target.blur(); clearTimeout(searchOnline.timer); if (dv.tab === 'all' && dv.online.q !== dv.q.trim()) searchOnline(); }
   if (ev.target.id === 'scan-code') nutritionActions['scan-lookup']();
   if (ev.target.id === 'fd-amt') nutritionActions['fd-save']();
 });
