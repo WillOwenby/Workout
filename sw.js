@@ -1,6 +1,6 @@
 // Offline cache for LiftLog. Bump VERSION when shipping changes.
-const VERSION = 'liftlog-v1';
-const FILES = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
+const VERSION = 'liftlog-v2';
+const FILES = ['./', 'index.html', 'styles.css', 'app.js', 'foods.js', 'nutrition.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
@@ -10,7 +10,8 @@ self.addEventListener('activate', (e) => {
 });
 // Network first so updates show up right away; fall back to cache when offline.
 self.addEventListener('fetch', (e) => {
-  if (e.request.method !== 'GET') return;
+  // Only cache the app's own files; online food lookups always go to the network.
+  if (e.request.method !== 'GET' || new URL(e.request.url).origin !== self.location.origin) return;
   e.respondWith(
     fetch(e.request)
       .then((res) => { const copy = res.clone(); caches.open(VERSION).then((c) => c.put(e.request, copy)); return res; })
