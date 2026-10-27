@@ -122,6 +122,9 @@ function defaultState() {
     body: {},   // 'YYYY-MM-DD' -> { weight, waist, bf }
     diet: {},   // 'YYYY-MM-DD' -> { entries: [], water: 0 }
     setup: {},  // exercise name (lowercase) -> { setting, notes }
+    foods: [],  // My foods (custom / saved)
+    meals: [],  // saved meals: { id, name, items: [entries] }
+    profile: {}, // calorie calculator inputs
   };
 }
 function load() {
@@ -293,17 +296,6 @@ function dietTotals(date) {
     count: es.length,
   };
 }
-function recentFoods() {
-  const seen = new Map();
-  const dates = Object.keys(S.diet).sort().reverse();
-  for (const dt of dates) for (const e of S.diet[dt].entries.slice().reverse()) {
-    const k = keyOf(e.name);
-    if (k && !seen.has(k)) seen.set(k, e);
-    if (seen.size >= 24) break;
-  }
-  return [...seen.values()];
-}
-
 function weightSeries() {
   return Object.keys(S.body).filter((d) => num(S.body[d].weight) != null).sort().map((d) => [d, num(S.body[d].weight)]);
 }
@@ -564,72 +556,6 @@ function exerciseCard(w, e, i) {
   </div>`;
 }
 
-function viewDiet() {
-  const d = ui.dietDate;
-  const day = S.diet[d] || { entries: [], water: 0 };
-  const t = dietTotals(d);
-  const st = S.settings;
-  const recents = recentFoods();
-  const isToday = d === today();
-  return `
-  <div class="card row between">
-    <button class="icon-btn" data-a="diet-date" data-n="-1" aria-label="Previous day">‹</button>
-    <div style="text-align:center"><b>${isToday ? 'Today' : fmtDate(d)}</b><div class="tiny muted">${isToday ? fmtDate(d) : `<button class="btn sm ghost" data-a="diet-today">Jump to today</button>`}</div></div>
-    <button class="icon-btn" data-a="diet-date" data-n="1" aria-label="Next day">›</button>
-  </div>
-
-  <div class="card">
-    <div class="row" style="gap:16px;align-items:center">
-      ${ring(t.cal, st.calGoal)}
-      <div class="grow">
-        <div class="small muted" style="margin-bottom:6px">${Math.round(t.cal).toLocaleString()} eaten · goal ${Number(st.calGoal).toLocaleString()}</div>
-        ${macroRow('Protein', t.p, st.proteinGoal, 'var(--protein)')}
-        ${macroRow('Carbs', t.c, st.carbGoal, 'var(--carbs)')}
-        ${macroRow('Fat', t.f, st.fatGoal, 'var(--fat)')}
-      </div>
-    </div>
-  </div>
-
-  <div class="card stack">
-    <h2>Add food</h2>
-    <div class="seg">${MEALS.map((m) => `<button class="${ui.meal === m ? 'on' : ''}" data-a="meal" data-v="${m}">${m}</button>`).join('')}</div>
-    <input id="food-name" placeholder="Food (e.g. Greek yogurt, 1 cup)" autocomplete="off" list="food-list">
-    <datalist id="food-list">${recents.map((f) => `<option value="${esc(f.name)}">`).join('')}</datalist>
-    <div class="grid2">
-      ${field('Calories', '<input id="food-cal" type="number" inputmode="decimal" placeholder="kcal">')}
-      ${field('Servings', '<input id="food-qty" type="number" inputmode="decimal" step="0.25" value="1">')}
-    </div>
-    <div class="grid3">
-      ${field('Protein g', '<input id="food-p" type="number" inputmode="decimal">')}
-      ${field('Carbs g', '<input id="food-c" type="number" inputmode="decimal">')}
-      ${field('Fat g', '<input id="food-f" type="number" inputmode="decimal">')}
-    </div>
-    <button class="btn primary block" data-a="food-add">Add to ${esc(ui.meal)}</button>
-    ${recents.length ? `<div><div class="small muted" style="margin-bottom:6px">Quick add to ${esc(ui.meal)}</div>
-      <div class="chips">${recents.slice(0, 12).map((f, k) => `<button class="chip" data-a="food-quick" data-k="${k}">${esc(f.name)} · ${Math.round(num(f.cal) || 0)}</button>`).join('')}</div></div>` : ''}
-  </div>
-
-  ${MEALS.map((m) => {
-    const es = day.entries.map((e, idx) => ({ e, idx })).filter((x) => x.e.meal === m);
-    const kcal = sum(es.map((x) => (num(x.e.cal) || 0) * (num(x.e.qty) || 1)));
-    return `<div class="card">
-      <div class="meal-head"><h3>${m}</h3><span class="small muted num">${Math.round(kcal)} kcal</span></div>
-      ${es.length ? es.map(({ e, idx }) => {
-        const q = num(e.qty) || 1;
-        return `<div class="list-item"><div class="grow"><div>${esc(e.name)}${q !== 1 ? ` <span class="muted small">× ${q}</span>` : ''}</div>
-          <div class="food-macros">${Math.round((num(e.cal) || 0) * q)} kcal · P ${r1((num(e.p) || 0) * q)} · C ${r1((num(e.c) || 0) * q)} · F ${r1((num(e.f) || 0) * q)}</div></div>
-          <button class="icon-btn" data-a="food-del" data-idx="${idx}" aria-label="Delete">✕</button></div>`;
-      }).join('') : '<div class="small muted">Nothing logged.</div>'}
-    </div>`;
-  }).join('')}
-
-  <div class="card row between">
-    <span>Water <span class="muted small">${t.water} / ${st.waterGoal} glasses</span></span>
-    <span class="row"><button class="icon-btn" data-a="water" data-d="${d}" data-n="-1" aria-label="Less water">−</button><button class="icon-btn" data-a="water" data-d="${d}" data-n="1" aria-label="More water">+</button></span>
-  </div>
-  ${!day.entries.length && S.diet[addDays(d, -1)]?.entries.length ? `<button class="btn block" data-a="diet-copy">Copy yesterday's food</button>` : ''}`;
-}
-
 function viewBody() {
   const st = S.settings;
   const d = ui.bodyDate;
@@ -834,6 +760,8 @@ function viewPlan() {
     }).join('')}
   </details>
 
+  ${goalCalculatorHtml()}
+
   <details class="card" open><summary>Settings & goals</summary>
     <div class="stack">
       <div class="grid2">
@@ -916,7 +844,10 @@ function render() {
   window.scrollTo(0, y);
   renderRest();
 }
-function go(tab) { ui.tab = tab; render(); window.scrollTo(0, 0); }
+function go(tab) {
+  if (tab === 'diet' || ui.tab === 'diet') resetDietView();
+  ui.tab = tab; render(); window.scrollTo(0, 0);
+}
 
 // ---------- rest timer ----------
 function startRest(seconds, name) {
@@ -1090,33 +1021,8 @@ const actions = {
   'rest-add'(d) { if (rest) { rest.end += Number(d.n) * 1000; rest.total = Math.max(rest.total + Number(d.n), 1); rest.alerted = false; renderRest(); } },
   'rest-stop'() { rest = null; renderRest(); },
 
-  // diet
-  'diet-date'(d) { ui.dietDate = addDays(ui.dietDate, Number(d.n)); render(); },
-  'diet-today'() { ui.dietDate = today(); render(); },
-  meal(d) { ui.meal = d.v; render(); },
-  'food-add'() {
-    const name = $('#food-name').value.trim();
-    const cal = num($('#food-cal').value);
-    if (!name) return toast('Enter a food name');
-    if (cal == null) return toast('Enter calories');
-    dietDay(ui.dietDate).entries.push({
-      id: uid(), meal: ui.meal, name, cal, qty: num($('#food-qty').value) || 1,
-      p: num($('#food-p').value) || 0, c: num($('#food-c').value) || 0, f: num($('#food-f').value) || 0,
-    });
-    save(); render(); toast(`Added to ${ui.meal}`);
-  },
-  'food-quick'(d) {
-    const f = recentFoods()[d.k];
-    if (!f) return;
-    dietDay(ui.dietDate).entries.push({ ...f, id: uid(), meal: ui.meal });
-    save(); render(); toast(`${f.name} added to ${ui.meal}`);
-  },
-  'food-del'(d) { dietDay(ui.dietDate).entries.splice(d.idx, 1); save(); render(); },
-  'diet-copy'() {
-    const y = S.diet[addDays(ui.dietDate, -1)];
-    dietDay(ui.dietDate).entries.push(...y.entries.map((e) => ({ ...e, id: uid() })));
-    save(); render(); toast("Copied yesterday's food");
-  },
+  // diet (see nutrition.js)
+  ...nutritionActions,
 
   // body
   'body-save'() {
@@ -1234,6 +1140,8 @@ function onField(ev) {
     S.setup[k] = { ...(S.setup[k] || {}), [f || 'setting']: val };
   } else if (kind === 'setting') {
     S.settings[f] = ['unit', 'programStart', 'goalWeight', 'autoRest'].includes(f) ? val : (num(val) ?? val);
+  } else if (kind === 'profile') {
+    S.profile[f] = val;
   } else if (kind === 'goal-notes') {
     S.goalNotes = val;
   } else if (kind === 'prog-day') {
@@ -1262,16 +1170,8 @@ document.addEventListener('change', (ev) => {
     }).catch(() => toast("That file doesn't look like a LiftLog backup"));
   }
 });
-// Fill-in food from history when a known name is chosen.
-document.addEventListener('change', (ev) => {
-  if (ev.target.id !== 'food-name') return;
-  const f = recentFoods().find((x) => keyOf(x.name) === keyOf(ev.target.value));
-  if (!f) return;
-  $('#food-cal').value = f.cal ?? ''; $('#food-p').value = f.p ?? ''; $('#food-c').value = f.c ?? ''; $('#food-f').value = f.f ?? '';
-});
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Enter' && ev.target.id === 'quick-weight') actions['quick-weight']();
-  if (ev.key === 'Enter' && ev.target.closest?.('#food-name, #food-cal, #food-p, #food-c, #food-f, #food-qty')) actions['food-add']();
 });
 
 // Re-render on day change (e.g. app left open overnight) and keep today's views fresh.
