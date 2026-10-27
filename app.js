@@ -6,6 +6,7 @@
    ========================================================================= */
 
 const STORE_KEY = 'liftlog.v1';
+const APP_VERSION = '1.3 (Oct 27, 2026)';
 
 // ---------- helpers ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -793,7 +794,7 @@ function viewPlan() {
   </details>
 
   <div class="card stack">
-    <h2>Your data</h2>
+    <div class="row between"><h2>Your data</h2><span class="tiny muted">Version ${APP_VERSION}</span></div>
     <p class="small muted" style="margin:0">Everything is stored on this device only. Export a backup now and then, and import it on a new phone.</p>
     <div class="row wrap">
       <button class="btn" data-a="export">Export backup</button>
@@ -1190,5 +1191,17 @@ if (S.active) ui.tab = 'train';
 render();
 
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  // Pick up new versions automatically: check for updates on launch and whenever the app comes back
+  // to the foreground, and reload once when a new version takes over. Data is saved on every change.
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return;
+    reloading = true;
+    location.reload();
+  });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
+    reg.update().catch(() => {});
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+  }).catch(() => {});
 }
