@@ -299,3 +299,12 @@ ul.tight li + li { margin-top: 6px; }
 .chart .bar-ok { fill: var(--accent); opacity: .55; }
 .chart .bar-over { fill: var(--bad); opacity: .6; }
 .chart .bar-sel { opacity: 1; }
+
+/* Progression status */
+.tag.st-up { color: var(--good); background: color-mix(in srgb, var(--good) 15%, transparent); }
+.tag.st-hold { color: var(--muted); }
+.tag.st-stall { color: var(--warn); background: color-mix(in srgb, var(--warn) 15%, transparent); }
+.tag.st-down { color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, transparent); }
+.ex-name .tag { vertical-align: 2px; margin-left: 4px; }
+.rir { gap: 8px; margin: 4px 0 10px; }
+.rir .chip { min-width: 40px; text-align: center; }

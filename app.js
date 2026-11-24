@@ -6,7 +6,7 @@
    ========================================================================= */
 
 const STORE_KEY = 'liftlog.v1';
-const APP_VERSION = '1.3 (Oct 27, 2026)';
+const APP_VERSION = '1.4 (Nov 24, 2026)';
 
 // ---------- helpers ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -114,7 +114,7 @@ function defaultState() {
     settings: {
       unit: 'lb', increment: 5, restCompound: 150, restIsolation: 90,
       calGoal: 2200, proteinGoal: 180, carbGoal: 200, fatGoal: 70, waterGoal: 8,
-      goalWeight: '', programStart: mondayOf(today()), autoRest: true,
+      goalWeight: '', programStart: mondayOf(today()), autoRest: true, deloadWeek4: false,
     },
     goalNotes: '',
     program: DEFAULT_PROGRAM(),
@@ -210,31 +210,6 @@ function lastPerformance(name, excludeId, beforeDate) {
   return null;
 }
 
-/** Gravl-style progression suggestion based on the template's double-progression rule. */
-function suggestion(e, prev) {
-  if (!prev) return { text: 'First time: pick a weight that leaves 1–3 reps in reserve.', perSet: [] };
-  const sets = prev.sets;
-  const ws = sets.map((s) => num(s.w));
-  const rs = sets.map((s) => num(s.r));
-  const lastStr = sets.map((s) => fmtSet(s, e)).join(', ');
-  const when = fmtDate(prev.date, { month: 'short', day: 'numeric' });
-  if (e.type === 'cardio') return { text: `Last (${when}): ${lastStr}`, perSet: sets.map((s) => ({ w: s.w, r: s.r })) };
-  const enoughSets = sets.length >= Math.min(e.sets, 2);
-  const allTop = enoughSets && rs.every((r) => r != null && r >= e.repMax);
-  const topW = Math.max(0, ...ws.filter((w) => w != null));
-  if (e.type === 'time') {
-    if (allTop) return { good: true, text: `Last (${when}): ${lastStr}. Hit ${e.repMax}s on every set — add load or a harder variation.`, perSet: sets.map((s) => ({ w: s.w, r: e.repMax })) };
-    return { text: `Last (${when}): ${lastStr}. Try holding a few seconds longer.`, perSet: sets.map((s) => ({ w: s.w, r: Math.min(e.repMax, (num(s.r) || e.repMin) + 5) })) };
-  }
-  if (allTop && topW > 0) {
-    const next = r1(topW + Number(S.settings.increment || 5));
-    return { good: true, text: `Last (${when}): ${lastStr}. Top of range on all sets — go up to ${next} ${unit()}.`, perSet: Array.from({ length: e.sets }, () => ({ w: next, r: e.repMin })) };
-  }
-  return {
-    text: `Last (${when}): ${lastStr}. Same weight — aim for +1 rep per set.`,
-    perSet: sets.map((s) => ({ w: s.w, r: Math.min(e.repMax, (num(s.r) || e.repMin - 1) + 1) })),
-  };
-}
 function fmtSet(s, e) {
   const w = num(s.w), r = num(s.r);
   if (e.type === 'cardio') return `${r1(w || 0)} min${r != null ? ` @ L${r}` : ''}`;
@@ -244,16 +219,18 @@ function fmtSet(s, e) {
 
 function newWorkoutFromDay(dayId) {
   const d = dayById(dayId);
+  const deload = deloadActive(today());
   const w = {
-    id: uid(), dayId: d.id, name: d.name, date: today(), startedAt: Date.now(),
-    exercises: d.exercises.map((e) => logExercise(e)),
+    id: uid(), dayId: d.id, name: d.name, date: today(), startedAt: Date.now(), deload,
+    exercises: d.exercises.map((e) => logExercise(e, deload)),
     notes: '', nextTime: [], effort: null, pain: '', bodyweight: S.body[today()]?.weight ?? '',
   };
   return w;
 }
-function logExercise(e) {
+function logExercise(e, deload = false) {
+  const n = deload && e.type === 'reps' ? Math.max(1, e.sets - 1) : e.sets;
   return {
-    uid: uid(), name: e.name, muscle: e.muscle, sets: Array.from({ length: e.sets }, () => ({ w: '', r: '', done: false })),
+    uid: uid(), name: e.name, muscle: e.muscle, sets: Array.from({ length: n }, () => ({ w: '', r: '', done: false })), rir: null, reset: false,
     targetSets: e.sets, setsText: e.setsText, repMin: e.repMin, repMax: e.repMax, type: e.type, compound: e.compound, perSide: e.perSide,
   };
 }
@@ -461,7 +438,7 @@ function viewTrainPicker() {
   const rec = recommendedDay();
   const ci = cycleInfo();
   return `
-  <p class="muted small" style="margin:0 0 12px">Cycle ${ci.cycle} · Week ${ci.week} of 4 — ${esc(WEEK_NOTES[ci.week - 1])}</p>
+  <p class="muted small" style="margin:0 0 12px">Cycle ${ci.cycle} · Week ${ci.week} of 4 — ${esc(WEEK_NOTES[ci.week - 1])}${deloadActive(today()) ? ' <b>Lighter week is on:</b> suggestions use about 90% weight and one less set.' : ''}</p>
   ${S.program.map((d) => {
     const last = finished().find((w) => w.dayId === d.id);
     return `<div class="card day-card d-${esc(d.id)}">
@@ -516,7 +493,7 @@ function viewLogger() {
 
 function exerciseCard(w, e, i) {
   const prev = lastPerformance(e.name, w.id, w.date);
-  const sug = suggestion(asTemplate(e), prev);
+  const sug = progressionFor(e, w);
   const [wl, rl] = colLabels(e);
   const setup = S.setup[keyOf(e.name)] || {};
   const swaps = SWAPS.filter((s) => s[2].some((k) => keyOf(e.name).includes(k)));
@@ -524,7 +501,7 @@ function exerciseCard(w, e, i) {
   return `<div class="card ex-card">
     <div class="ex-head">
       <div class="grow">
-        <div class="ex-name">${esc(e.name)}</div>
+        <div class="ex-name">${esc(e.name)} ${statusTag(sug.status)}</div>
         <div class="ex-meta">${esc(e.muscle || '')}${e.muscle ? ' · ' : ''}Target ${targetText(asTemplate(e))}${e.compound ? ' · rest 2–3 min' : ''}${best ? ` · e1RM best ${Math.round(best)}` : ''}</div>
       </div>
       <button class="icon-btn" data-a="ex-up" data-i="${i}" aria-label="Move up" ${i === 0 ? 'disabled' : ''}>↑</button>
@@ -536,8 +513,11 @@ function exerciseCard(w, e, i) {
         <button class="chip" data-a="swap-custom" data-i="${i}">Rename / custom swap…</button>
         <button class="chip" data-a="ex-remove" data-i="${i}">Remove exercise</button>
       </div>
+      ${e.type === 'reps' ? `<label class="row small" style="margin-top:8px">Weight jump (${unit()})
+        <input type="number" inputmode="decimal" step="any" data-in="setup" data-name="${esc(e.name)}" data-f="inc" value="${esc(setup.inc ?? '')}" placeholder="${esc(defaultInc(e))}" style="width:90px;min-height:34px"></label>` : ''}
     </div>
-    <div class="hint ${sug.good ? 'good' : ''}">${esc(sug.text)}</div>
+    <div class="hint ${sug.good ? 'good' : ''}">${esc(sug.text)}
+      ${sug.canReset ? `<button class="btn sm" style="margin-top:8px" data-a="ex-reset" data-i="${i}">${e.reset ? 'Undo lighter restart' : 'Lighter restart (−10%)'}</button>` : ''}</div>
     <input class="small" data-in="setup" data-name="${esc(e.name)}" value="${esc(setup.setting || '')}" placeholder="Machine / setup (seat, pin, grip…)" style="min-height:34px">
     <table class="sets">
       <thead><tr><th>Set</th><th>Prev</th><th>${esc(wl)}</th><th>${esc(rl)}</th><th></th></tr></thead>
@@ -553,6 +533,7 @@ function exerciseCard(w, e, i) {
         </tr>`;
       }).join('')}</tbody>
     </table>
+    ${rirPicker(e, i)}
     <div class="row"><button class="btn sm grow" data-a="set-add" data-i="${i}">+ Add set</button><button class="btn sm grow" data-a="set-remove" data-i="${i}" ${e.sets.length <= 1 ? 'disabled' : ''}>− Remove set</button></div>
   </div>`;
 }
@@ -679,7 +660,9 @@ function exerciseProgress(name) {
   if (!rows.length) return '<div class="empty">No completed sets yet.</div>';
   const best = rows.reduce((a, r) => (r.e1 > a.e1 ? r : a));
   const heaviest = rows.reduce((a, r) => (r.maxW > a.maxW ? r : a));
+  const tmpl = S.program.flatMap((d) => d.exercises).find((x) => keyOf(x.name) === keyOf(name)) || { name, type: 'reps', repMin: 8, repMax: 12, sets: 3 };
   return `
+    <div style="margin-top:10px">${statusTag(exStatus(tmpl, exHistory(name)))}</div>
     <div class="grid3" style="margin:10px 0">
       <div class="stat"><div class="v">${Math.round(best.e1)}</div><div class="l">best est. 1RM</div></div>
       <div class="stat"><div class="v">${fmtNum(heaviest.maxW)}</div><div class="l">heaviest (${unit()})</div></div>
@@ -749,14 +732,16 @@ function viewPlan() {
   </details>
 
   <details class="card"><summary>My baseline weights / machine settings</summary>
-    <p class="small muted" style="margin-top:0">These also show on each exercise while you train.</p>
+    <p class="small muted" style="margin-top:0">These also show on each exercise while you train. The last box is the weight jump used when you're ready to go up.</p>
     ${names.map((n) => {
       const s = S.setup[keyOf(n)] || {};
       const lp = lastPerformance(n);
+      const tmpl = S.program.flatMap((d) => d.exercises).find((x) => x.name === n);
       return `<div class="list-item" style="display:block"><div class="row between"><b class="small">${esc(n)}</b><span class="tiny muted">${lp ? 'last ' + esc(lp.sets.map((x) => fmtSet(x, lp.e)).join(', ')) : ''}</span></div>
-        <div class="grid2" style="margin-top:6px">
+        <div class="grid3" style="margin-top:6px;grid-template-columns:1fr 1.4fr 0.8fr">
           <input class="small" data-in="setup" data-name="${esc(n)}" value="${esc(s.setting || '')}" placeholder="Weight / setting">
           <input class="small" data-in="setup" data-name="${esc(n)}" data-f="notes" value="${esc(s.notes || '')}" placeholder="Notes (seat, pin, grip…)">
+          ${tmpl?.type === 'reps' ? `<input class="small" type="number" inputmode="decimal" step="any" data-in="setup" data-name="${esc(n)}" data-f="inc" value="${esc(s.inc ?? '')}" placeholder="+${esc(defaultInc(tmpl))} ${unit()}" aria-label="Weight jump">` : '<span></span>'}
         </div></div>`;
     }).join('')}
   </details>
@@ -767,13 +752,15 @@ function viewPlan() {
     <div class="stack">
       <div class="grid2">
         ${field('Units', `<select data-in="setting" data-f="unit">${['lb', 'kg'].map((u) => `<option ${st.unit === u ? 'selected' : ''}>${u}</option>`).join('')}</select>`)}
-        ${field(`Weight increment (${unit()})`, `<input type="number" step="0.5" data-in="setting" data-f="increment" value="${esc(st.increment)}">`)}
+        ${field(`Default weight jump (${unit()})`, `<input type="number" step="0.5" data-in="setting" data-f="increment" value="${esc(st.increment)}">`)}
       </div>
       <div class="grid2">
         ${field('Rest: compound (sec)', `<input type="number" data-in="setting" data-f="restCompound" value="${esc(st.restCompound)}">`)}
         ${field('Rest: isolation (sec)', `<input type="number" data-in="setting" data-f="restIsolation" value="${esc(st.restIsolation)}">`)}
       </div>
+      <p class="tiny muted" style="margin:0">Big lower-body lifts (leg press, squat, RDL) use double the default jump. Change any exercise from its ⋯ menu or under baseline weights.</p>
       <label class="row small"><input type="checkbox" data-in="setting" data-f="autoRest" ${st.autoRest ? 'checked' : ''} style="width:auto;min-height:0"> Start rest timer automatically when a set is completed</label>
+      <label class="row small"><input type="checkbox" data-in="setting" data-f="deloadWeek4" ${st.deloadWeek4 ? 'checked' : ''} style="width:auto;min-height:0"> Make Week 4 of each cycle a lighter week (about 90% weight, one less set)</label>
       <div class="grid2">
         ${field('Cycle start date', `<input type="date" data-in="setting" data-f="programStart" value="${esc(st.programStart)}">`)}
         ${field(`Goal weight (${unit()})`, `<input type="number" step="0.1" data-in="setting" data-f="goalWeight" value="${esc(st.goalWeight)}">`)}
@@ -1026,6 +1013,7 @@ const actions = {
 
   // diet (see nutrition.js)
   ...nutritionActions,
+  ...progressionActions,
 
   // body
   'body-save'() {
@@ -1142,7 +1130,7 @@ function onField(ev) {
     const k = keyOf(el.dataset.name);
     S.setup[k] = { ...(S.setup[k] || {}), [f || 'setting']: val };
   } else if (kind === 'setting') {
-    S.settings[f] = ['unit', 'programStart', 'goalWeight', 'autoRest', 'usdaKey'].includes(f) ? val : (num(val) ?? val);
+    S.settings[f] = ['unit', 'programStart', 'goalWeight', 'autoRest', 'usdaKey', 'deloadWeek4'].includes(f) ? val : (num(val) ?? val);
   } else if (kind === 'profile') {
     S.profile[f] = val;
   } else if (kind === 'goal-notes') {

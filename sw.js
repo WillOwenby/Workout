@@ -1,6 +1,6 @@
 // Offline cache for LiftLog. Bump VERSION when shipping changes.
-const VERSION = 'liftlog-v4';
-const FILES = ['./', 'index.html', 'styles.css', 'app.js', 'foods.js', 'nutrition.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
+const VERSION = 'liftlog-v5';
+const FILES = ['./', 'index.html', 'styles.css', 'app.js', 'foods.js', 'nutrition.js', 'progression.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
   // cache: 'reload' skips the browser's HTTP cache so a new version never installs stale files.
