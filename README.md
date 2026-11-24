@@ -8,7 +8,14 @@ It's a plain HTML/CSS/JS web app with no build step and no account. Your data st
 
 - **Today**: your next workout in the rotation, where you are in the 4-week cycle (with that week's progression note), a this-week tracker, quick bodyweight entry, calories/macros and water.
 - **Train**: start any day and log each set (weight × reps) as you go.
-  - Shows what you did last time, plus a **progression suggestion** that follows the template's rule: hit the top of the rep range on every set → add the smallest increment; otherwise keep the weight and add reps.
+  - Shows what you did last time and suggests your next weights and reps with **progressive overload**:
+    - **Double progression:** add reps until you hit the top of the range on every set, then add weight. With 3+ reps to spare on the one-tap effort check, it adds two jumps.
+    - **Weight jump for each exercise:** big lower-body lifts default to double the base jump. Change any exercise from its ⋯ menu.
+    - **Your "Next time" choices** (increase weight / add reps / keep weights) override the automatic rule.
+    - **Stalls:** after 3 sessions without progress, a **Lighter restart (−10%)** button appears.
+    - **Back-off:** if reps fall below the range two sessions in a row, it suggests dropping about 7.5%.
+    - **Optional lighter Week 4:** about 90% weight and one less set.
+    - **Status tags** on each exercise: ↑ Progressing, → Holding, ⚠ Stalled, ↓ Back off.
   - Tap ✓ to finish a set. Any empty box is filled in from the suggestion.
   - The **rest timer** starts on its own: 2½ min for compound lifts, 90 s for the rest (you can change both).
   - Swap an exercise (using the template's swap list), add/remove sets or exercises, and save machine settings.
