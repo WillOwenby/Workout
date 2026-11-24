@@ -6,7 +6,7 @@
    ========================================================================= */
 
 const STORE_KEY = 'liftlog.v1';
-const APP_VERSION = '1.4 (Nov 24, 2026)';
+const APP_VERSION = '1.5 (Nov 24, 2026)';
 
 // ---------- helpers ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -158,7 +158,7 @@ const ui = {
   planDay: 'push',
   editPlan: false,
   openWorkout: null,
-  addExOpen: false,
+  exSearch: null,   // quick exercise search: { mode: 'add' | 'swap', i, q, group }
 };
 let rest = null; // { end, total, name }
 
@@ -230,7 +230,7 @@ function newWorkoutFromDay(dayId) {
 function logExercise(e, deload = false) {
   const n = deload && e.type === 'reps' ? Math.max(1, e.sets - 1) : e.sets;
   return {
-    uid: uid(), name: e.name, muscle: e.muscle, sets: Array.from({ length: n }, () => ({ w: '', r: '', done: false })), rir: null, reset: false,
+    uid: uid(), name: e.name, base: e.name, muscle: e.muscle, sets: Array.from({ length: n }, () => ({ w: '', r: '', done: false })), rir: null, reset: false,
     targetSets: e.sets, setsText: e.setsText, repMin: e.repMin, repMax: e.repMax, type: e.type, compound: e.compound, perSide: e.perSide,
   };
 }
@@ -454,8 +454,8 @@ function viewTrainPicker() {
 }
 
 function viewLogger() {
+  if (ui.exSearch) return viewExerciseSearch();
   const w = S.active;
-  const allNames = [...new Set(S.program.flatMap((d) => d.exercises.map((e) => e.name)))];
   return `
   <div class="card hero d-${esc(w.dayId)}">
     <div class="row between">${dayTag(w.dayId, w.name)}<span class="num" id="elapsed">${fmtClock((Date.now() - w.startedAt) / 1000)}</span></div>
@@ -468,15 +468,7 @@ function viewLogger() {
 
   ${w.exercises.map((e, i) => exerciseCard(w, e, i)).join('')}
 
-  <div class="card">
-    ${ui.addExOpen ? `
-      <h3>Add exercise</h3>
-      <div class="stack">
-        <select id="add-ex-select"><option value="">Choose from your plan…</option>${allNames.map((n) => `<option>${esc(n)}</option>`).join('')}</select>
-        <input id="add-ex-custom" placeholder="…or type a custom exercise name">
-        <div class="row"><button class="btn primary grow" data-a="add-ex">Add</button><button class="btn" data-a="toggle-add-ex">Cancel</button></div>
-      </div>` : `<button class="btn block" data-a="toggle-add-ex">+ Add exercise</button>`}
-  </div>
+  <button class="btn block" style="margin-bottom:12px" data-a="exs-open" data-mode="add">+ Add exercise</button>
 
   <div class="card stack">
     <h2>Session wrap-up</h2>
@@ -496,7 +488,6 @@ function exerciseCard(w, e, i) {
   const sug = progressionFor(e, w);
   const [wl, rl] = colLabels(e);
   const setup = S.setup[keyOf(e.name)] || {};
-  const swaps = SWAPS.filter((s) => s[2].some((k) => keyOf(e.name).includes(k)));
   const best = e.type === 'reps' ? bestE1rm(e.name, w.id) : 0;
   return `<div class="card ex-card">
     <div class="ex-head">
@@ -507,10 +498,11 @@ function exerciseCard(w, e, i) {
       <button class="icon-btn" data-a="ex-up" data-i="${i}" aria-label="Move up" ${i === 0 ? 'disabled' : ''}>↑</button>
       <button class="icon-btn" data-a="ex-menu" data-i="${i}" aria-label="More">⋯</button>
     </div>
+    ${variantPicker(w, e, i)}
     <div id="exmenu-${i}" class="hidden" style="margin-top:10px">
       <div class="chips">
-        ${swaps.map((s) => `<button class="chip" data-a="swap" data-i="${i}" data-v="${esc(s[1])}">Swap → ${esc(s[1])}</button>`).join('')}
-        <button class="chip" data-a="swap-custom" data-i="${i}">Rename / custom swap…</button>
+        <button class="chip" data-a="exs-open" data-mode="swap" data-i="${i}">🔍 Search all exercises…</button>
+        <button class="chip" data-a="swap-custom" data-i="${i}">Type a custom name…</button>
         <button class="chip" data-a="ex-remove" data-i="${i}">Remove exercise</button>
       </div>
       ${e.type === 'reps' ? `<label class="row small" style="margin-top:8px">Weight jump (${unit()})
@@ -699,7 +691,7 @@ function workoutCard(w) {
 function viewPlan() {
   const st = S.settings;
   const day = dayById(ui.planDay) || S.program[0];
-  const names = [...new Set(S.program.flatMap((d) => d.exercises.map((e) => e.name)))];
+  const names = [...new Set(S.program.flatMap((d) => d.exercises.map((e) => e.name)).concat(S.workouts.flatMap((w) => w.exercises.map((e) => e.name))))];
   return `
   <div class="card">
     <h2>Personal goal / notes</h2>
@@ -835,6 +827,7 @@ function render() {
   renderRest();
 }
 function go(tab) {
+  ui.exSearch = null;
   if (tab === 'diet' || ui.tab === 'diet') resetDietView();
   ui.tab = tab; render(); window.scrollTo(0, 0);
 }
@@ -886,7 +879,6 @@ const actions = {
   start(d) {
     if (S.active) { if (!confirm('A workout is already in progress. Discard it and start a new one?')) return; }
     S.active = newWorkoutFromDay(d.day);
-    ui.addExOpen = false;
     save(); go('train');
   },
   'quick-weight'() {
@@ -943,24 +935,10 @@ const actions = {
     S.active.exercises.splice(d.i, 1);
     save(); render();
   },
-  swap(d) {
-    const e = S.active.exercises[d.i];
-    e.name = d.v; e.sets.forEach((s) => { if (!s.done) { s.w = ''; } });
-    save(); render();
-  },
   'swap-custom'(d) {
     const e = S.active.exercises[d.i];
     const n = prompt('Exercise name for this workout:', e.name);
-    if (n && n.trim()) { e.name = n.trim(); save(); render(); }
-  },
-  'toggle-add-ex'() { ui.addExOpen = !ui.addExOpen; render(); },
-  'add-ex'() {
-    const name = ($('#add-ex-custom').value || $('#add-ex-select').value).trim();
-    if (!name) return toast('Pick or type an exercise');
-    const tmpl = S.program.flatMap((x) => x.exercises).find((x) => keyOf(x.name) === keyOf(name));
-    S.active.exercises.push(logExercise(tmpl || ex(name, '', 3, 8, 12)));
-    ui.addExOpen = false;
-    save(); render();
+    if (n && n.trim()) { switchExercise(e, n.trim()); save(); render(); }
   },
   'next-time'(d) {
     const a = S.active.nextTime;
@@ -1014,6 +992,7 @@ const actions = {
   // diet (see nutrition.js)
   ...nutritionActions,
   ...progressionActions,
+  ...exerciseActions,
 
   // body
   'body-save'() {

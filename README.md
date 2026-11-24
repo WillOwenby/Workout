@@ -18,7 +18,9 @@ It's a plain HTML/CSS/JS web app with no build step and no account. Your data st
     - **Status tags** on each exercise: ↑ Progressing, → Holding, ⚠ Stalled, ↓ Back off.
   - Tap ✓ to finish a set. Any empty box is filled in from the suggestion.
   - The **rest timer** starts on its own: 2½ min for compound lifts, 90 s for the rest (you can change both).
-  - Swap an exercise (using the template's swap list), add/remove sets or exercises, and save machine settings.
+  - **Switch exercises in one tap:** each exercise has a dropdown with its **top 3 alternatives** (for example bench press → dumbbell bench, machine chest press, Smith bench), each showing your last result. The alternative you used last time is marked.
+  - **Quick exercise search** (~90 exercises, filterable by muscle group) for adding or switching an exercise. Anything else can be typed as a custom exercise.
+  - Every exercise and alternative keeps **its own history**: previous sets, progression suggestions, PRs, machine settings and weight jump. Switching keeps the slot's sets and rep range.
   - The session wrap-up has notes, "next time" choices, effort (1–5) and pain/form notes.
   - Flags PRs, based on estimated 1-rep max.
 - **Diet** (MyFitnessPal-style food diary):
