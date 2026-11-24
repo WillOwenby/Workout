@@ -6,7 +6,7 @@
    ========================================================================= */
 
 const STORE_KEY = 'liftlog.v1';
-const APP_VERSION = '1.5 (Nov 24, 2026)';
+const APP_VERSION = '1.6 (Nov 25, 2026)';
 
 // ---------- helpers ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -158,6 +158,7 @@ const ui = {
   planDay: 'push',
   editPlan: false,
   openWorkout: null,
+  cues: {},        // exercise uids with form cues expanded
   exSearch: null,   // quick exercise search: { mode: 'add' | 'swap', i, q, group }
 };
 let rest = null; // { end, total, name }
@@ -168,8 +169,27 @@ const dayById = (id) => S.program.find((d) => d.id === id);
 const keyOf = (name) => String(name || '').trim().toLowerCase();
 const finished = () => S.workouts.slice().sort((a, b) => (b.date + (b.finishedAt || 0)).localeCompare(a.date + (a.finishedAt || 0)));
 
+// Rep schemes selectable in the plan editor: ranges, fixed reps (5-5-5) and pyramids/waves (10-8-6, 3-2-1).
+const REP_CHOICES = [
+  ['Rep ranges', [[5, 8], [6, 10], [8, 12], [10, 15], [12, 15], [12, 20], [15, 20]].map(([a, b]) => [`r:${a}-${b}`, `${a}–${b} reps`])],
+  ['Same reps every set', [3, 5, 6, 8, 10].map((n) => [`f:${n}`, `${n} reps each set`])],
+  ['Pyramids & waves (heavier each set)', [[12, 10, 8], [10, 8, 6], [8, 6, 4], [5, 3, 1], [3, 2, 1]].map((a) => [`p:${a.join('-')}`, `${a.join(' / ')}`])],
+];
+function repChoiceOf(e) {
+  if (Array.isArray(e.scheme) && e.scheme.length > 1) return `p:${e.scheme.join('-')}`;
+  return e.repMin === e.repMax ? `f:${e.repMin}` : `r:${e.repMin}-${e.repMax}`;
+}
+function applyRepChoice(e, v) {
+  const [kind, body] = v.split(':');
+  const nums = body.split('-').map(Number);
+  if (kind === 'p') { e.scheme = nums; e.sets = nums.length; e.repMin = Math.min(...nums); e.repMax = Math.max(...nums); }
+  else { delete e.scheme; e.repMin = nums[0]; e.repMax = nums[1] ?? nums[0]; }
+  e.setsText = '';
+}
+
 function targetText(e) {
   if (e.type === 'cardio') return `${e.repMin}–${e.repMax} min`;
+  if (Array.isArray(e.scheme) && e.scheme.length > 1) return `${e.scheme.join(' / ')} reps, heavier each set`;
   const sets = e.setsText || e.sets;
   const reps = e.repMin === e.repMax ? `${e.repMin}` : `${e.repMin}–${e.repMax}`;
   return `${sets} × ${reps}${e.type === 'time' ? ' sec' : ''}${e.perSide ? '/leg' : ''}`;
@@ -228,10 +248,10 @@ function newWorkoutFromDay(dayId) {
   return w;
 }
 function logExercise(e, deload = false) {
-  const n = deload && e.type === 'reps' ? Math.max(1, e.sets - 1) : e.sets;
+  const n = deload && e.type === 'reps' && !e.scheme ? Math.max(1, e.sets - 1) : e.sets;
   return {
     uid: uid(), name: e.name, base: e.name, muscle: e.muscle, sets: Array.from({ length: n }, () => ({ w: '', r: '', done: false })), rir: null, reset: false,
-    targetSets: e.sets, setsText: e.setsText, repMin: e.repMin, repMax: e.repMax, type: e.type, compound: e.compound, perSide: e.perSide,
+    targetSets: e.sets, setsText: e.setsText, repMin: e.repMin, repMax: e.repMax, scheme: e.scheme ? [...e.scheme] : null, type: e.type, compound: e.compound, perSide: e.perSide,
   };
 }
 const asTemplate = (le) => ({ ...le, sets: le.targetSets });
@@ -489,10 +509,13 @@ function exerciseCard(w, e, i) {
   const [wl, rl] = colLabels(e);
   const setup = S.setup[keyOf(e.name)] || {};
   const best = e.type === 'reps' ? bestE1rm(e.name, w.id) : 0;
+  const cues = cuesFor(e.name) || cuesFor(e.base || '');
+  const firstBig = e.compound && e.type === 'reps' && w.exercises.find((x) => x.compound && x.type === 'reps') === e;
   return `<div class="card ex-card">
     <div class="ex-head">
       <div class="grow">
-        <div class="ex-name">${esc(e.name)} ${statusTag(sug.status)}</div>
+        <div class="ex-name ${cues ? 'tap' : ''}" ${cues ? `data-a="cues" data-u="${esc(e.uid)}"` : ''}>${esc(e.name)}${cues ? ' <span class="cue-i" aria-hidden="true">ⓘ</span>' : ''} ${statusTag(sug.status)}</div>
+        ${cues && ui.cues[e.uid] ? `<div class="cues">${esc(cues)}</div>` : ''}
         <div class="ex-meta">${esc(e.muscle || '')}${e.muscle ? ' · ' : ''}Target ${targetText(asTemplate(e))}${e.compound ? ' · rest 2–3 min' : ''}${best ? ` · e1RM best ${Math.round(best)}` : ''}</div>
       </div>
       <button class="icon-btn" data-a="ex-up" data-i="${i}" aria-label="Move up" ${i === 0 ? 'disabled' : ''}>↑</button>
@@ -508,7 +531,11 @@ function exerciseCard(w, e, i) {
       ${e.type === 'reps' ? `<label class="row small" style="margin-top:8px">Weight jump (${unit()})
         <input type="number" inputmode="decimal" step="any" data-in="setup" data-name="${esc(e.name)}" data-f="inc" value="${esc(setup.inc ?? '')}" placeholder="${esc(defaultInc(e))}" style="width:90px;min-height:34px"></label>` : ''}
     </div>
-    <div class="hint ${sug.good ? 'good' : ''}">${esc(sug.text)}
+    <div class="hint ${sug.good ? 'good' : ''}">
+      ${sug.last ? `<div class="hint-last">${esc(sug.last)}</div>` : ''}
+      <div class="hint-do">${esc(sug.text)}</div>
+      ${sug.target ? `<div class="hint-target">${esc(sug.target)}</div>` : ''}
+      ${firstBig ? `<div class="hint-target">${esc(warmupLine(e, sug))}</div>` : ''}
       ${sug.canReset ? `<button class="btn sm" style="margin-top:8px" data-a="ex-reset" data-i="${i}">${e.reset ? 'Undo lighter restart' : 'Lighter restart (−10%)'}</button>` : ''}</div>
     <input class="small" data-in="setup" data-name="${esc(e.name)}" value="${esc(setup.setting || '')}" placeholder="Machine / setup (seat, pin, grip…)" style="min-height:34px">
     <table class="sets">
@@ -525,7 +552,7 @@ function exerciseCard(w, e, i) {
         </tr>`;
       }).join('')}</tbody>
     </table>
-    ${rirPicker(e, i)}
+    ${rirPicker(e, i, e.type === 'reps' ? rirTarget(w.date, w.deload) : null)}
     <div class="row"><button class="btn sm grow" data-a="set-add" data-i="${i}">+ Add set</button><button class="btn sm grow" data-a="set-remove" data-i="${i}" ${e.sets.length <= 1 ? 'disabled' : ''}>− Remove set</button></div>
   </div>`;
 }
@@ -784,6 +811,14 @@ function viewPlan() {
   </div>`;
 }
 
+function repSelect(day, e, i) {
+  const cur = repChoiceOf(e);
+  const known = REP_CHOICES.some(([, opts]) => opts.some(([v]) => v === cur));
+  const groups = known ? REP_CHOICES : [['Current', [[cur, targetText({ ...e, sets: e.sets })]]], ...REP_CHOICES];
+  return `<select data-in="prog" data-d="${esc(day.id)}" data-i="${i}" data-f="reps">${groups.map(([g, opts]) =>
+    `<optgroup label="${esc(g)}">${opts.map(([v, l]) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`).join('')}</optgroup>`).join('')}</select>`;
+}
+
 function planEditor(day) {
   return `
     ${field('Focus', `<input data-in="prog-day" data-d="${esc(day.id)}" data-f="focus" value="${esc(day.focus)}">`)}
@@ -792,9 +827,10 @@ function planEditor(day) {
         <button class="icon-btn" data-a="prog-up" data-i="${i}" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button>
         <button class="icon-btn" data-a="prog-del" data-i="${i}" aria-label="Delete">✕</button></div>
       <div class="grid3" style="margin-top:6px;grid-template-columns:repeat(4,1fr)">
-        ${field('Sets', `<input type="number" data-in="prog" data-d="${esc(day.id)}" data-i="${i}" data-f="sets" value="${e.sets}">`)}
-        ${field(e.type === 'time' ? 'Min sec' : e.type === 'cardio' ? 'Min min' : 'Min reps', `<input type="number" data-in="prog" data-d="${esc(day.id)}" data-i="${i}" data-f="repMin" value="${e.repMin}">`)}
-        ${field(e.type === 'time' ? 'Max sec' : e.type === 'cardio' ? 'Max min' : 'Max reps', `<input type="number" data-in="prog" data-d="${esc(day.id)}" data-i="${i}" data-f="repMax" value="${e.repMax}">`)}
+        ${field('Sets', `<select data-in="prog" data-d="${esc(day.id)}" data-i="${i}" data-f="sets" ${e.scheme ? 'disabled' : ''}>${[1, 2, 3, 4, 5, 6].map((n) => `<option ${e.sets === n ? 'selected' : ''}>${n}</option>`).join('')}</select>`)}
+        ${e.type === 'reps' ? `<div style="grid-column:span 2">${field('Reps', repSelect(day, e, i))}</div>` : `
+        ${field(e.type === 'time' ? 'Min sec' : 'Min min', `<input type="number" data-in="prog" data-d="${esc(day.id)}" data-i="${i}" data-f="repMin" value="${e.repMin}">`)}
+        ${field(e.type === 'time' ? 'Max sec' : 'Max min', `<input type="number" data-in="prog" data-d="${esc(day.id)}" data-i="${i}" data-f="repMax" value="${e.repMax}">`)}`}
         ${field('Type', `<select data-in="prog" data-d="${esc(day.id)}" data-i="${i}" data-f="type">${[['reps', 'Reps'], ['time', 'Timed'], ['cardio', 'Cardio']].map(([v, l]) => `<option value="${v}" ${e.type === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}
       </div>
       <div class="grid2" style="margin-top:6px">
@@ -993,6 +1029,7 @@ const actions = {
   ...nutritionActions,
   ...progressionActions,
   ...exerciseActions,
+  cues(d) { ui.cues[d.u] = !ui.cues[d.u]; render(); },
 
   // body
   'body-save'() {
@@ -1118,11 +1155,13 @@ function onField(ev) {
     dayById(el.dataset.d)[f] = val;
   } else if (kind === 'prog') {
     const e = dayById(el.dataset.d).exercises[el.dataset.i];
-    e[f] = ['sets', 'repMin', 'repMax'].includes(f) ? Math.max(1, Math.round(num(val) || 1)) : val;
+    if (f === 'reps') applyRepChoice(e, val);
+    else e[f] = ['sets', 'repMin', 'repMax'].includes(f) ? Math.max(1, Math.round(num(val) || 1)) : val;
     if (f === 'sets') e.setsText = '';
+    if (f === 'type' && val !== 'reps') delete e.scheme;
   }
   save();
-  if (ev.type === 'change' && (kind === 'setting' && f === 'unit' || kind === 'prog' && f === 'type')) render();
+  if (ev.type === 'change' && (kind === 'setting' && f === 'unit' || kind === 'prog' && ['type', 'reps'].includes(f))) render();
 }
 document.addEventListener('input', onField);
 document.addEventListener('change', (ev) => {

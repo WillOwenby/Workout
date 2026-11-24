@@ -311,3 +311,10 @@ ul.tight li + li { margin-top: 6px; }
 
 /* Exercise variant picker */
 select.variant { margin-top: 10px; width: 100%; min-height: 36px; padding: 6px 30px 6px 10px; font-size: 13px; font-weight: 600; }
+
+/* Coaching */
+.hint-last { font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+.hint-do { font-weight: 600; }
+.hint-target { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.cue-i { font-size: 13px; color: var(--muted); font-weight: 400; }
+.cues { font-size: 13px; margin: 6px 0 2px; padding: 8px 10px; border-left: 3px solid var(--accent); background: var(--surface-2); border-radius: 0 8px 8px 0; }

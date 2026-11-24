@@ -16,6 +16,10 @@ It's a plain HTML/CSS/JS web app with no build step and no account. Your data st
     - **Back-off:** if reps fall below the range two sessions in a row, it suggests dropping about 7.5%.
     - **Optional lighter Week 4:** about 90% weight and one less set.
     - **Status tags** on each exercise: ↑ Progressing, → Holding, ⚠ Stalled, ↓ Back off.
+    - **Weekly effort target** (reps in reserve: 3, 2, 1 across the 4-week cycle) on every exercise. The one-tap effort check is compared with it: more reps left than targeted means a bigger jump or +2 reps.
+    - **Rep schemes picked from a dropdown** in the plan editor: ranges (8–12…), the same reps every set (5-5-5…), or pyramids and waves (10/8/6, 3/2/1). Each has its own progression rule.
+    - **Form cues:** tap an exercise name to show two short pointers.
+    - **Warm-up ramp** (about 50% × 8, 70% × 5, 85% × 2) on the first big lift of each workout.
   - Tap ✓ to finish a set. Any empty box is filled in from the suggestion.
   - The **rest timer** starts on its own: 2½ min for compound lifts, 90 s for the rest (you can change both).
   - **Switch exercises in one tap:** each exercise has a dropdown with its **top 3 alternatives** (for example bench press → dumbbell bench, machine chest press, Smith bench), each showing your last result. The alternative you used last time is marked.

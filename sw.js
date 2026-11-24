@@ -1,5 +1,5 @@
 // Offline cache for LiftLog. Bump VERSION when shipping changes.
-const VERSION = 'liftlog-v6';
+const VERSION = 'liftlog-v7';
 const FILES = ['./', 'index.html', 'styles.css', 'app.js', 'foods.js', 'nutrition.js', 'progression.js', 'exercises.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
