@@ -308,3 +308,6 @@ ul.tight li + li { margin-top: 6px; }
 .ex-name .tag { vertical-align: 2px; margin-left: 4px; }
 .rir { gap: 8px; margin: 4px 0 10px; }
 .rir .chip { min-width: 40px; text-align: center; }
+
+/* Exercise variant picker */
+select.variant { margin-top: 10px; width: 100%; min-height: 36px; padding: 6px 30px 6px 10px; font-size: 13px; font-weight: 600; }
