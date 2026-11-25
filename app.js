@@ -6,12 +6,13 @@
    ========================================================================= */
 
 const STORE_KEY = 'liftlog.v1';
-const APP_VERSION = '1.6 (Nov 25, 2026)';
+const APP_VERSION = '1.7 (Nov 25, 2026)';
 
 // ---------- helpers ----------
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
+const keyOf = (name) => String(name || '').trim().toLowerCase();
 const pad = (n) => String(n).padStart(2, '0');
 const ymd = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const parseYmd = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
@@ -29,43 +30,68 @@ const e1rm = (w, r) => (w > 0 && r > 0 ? w * (1 + Math.min(r, 15) / 30) : 0);
 const today = () => ymd();
 
 // ---------- template data (from the 4-day tracker doc) ----------
+// Weekly rotating pyramids: Week 1, 2, 3 of the cycle (Week 4 repeats Week 1).
+const ROTATIONS = {
+  c: { label: 'Big lifts', weeks: [[12, 10, 8], [10, 8, 6], [8, 6, 4]] },
+  i: { label: 'Smaller lifts', weeks: [[15, 12, 10], [12, 10, 8], [10, 8, 6]] },
+};
+const rotationText = (key) => ROTATIONS[key].weeks.map((w) => w.join('/')).join(' → ');
+/** The rep targets for this week: a rotating pyramid, a fixed pyramid, or null for straight sets. */
+function schemeForWeek(e, date = today()) {
+  if (e.rotation && ROTATIONS[e.rotation]) {
+    const wk = cycleInfo(date).week;
+    return [...ROTATIONS[e.rotation].weeks[wk === 4 ? 0 : wk - 1]];
+  }
+  return Array.isArray(e.scheme) && e.scheme.length > 1 ? [...e.scheme] : null;
+}
+function setRotation(e, key) {
+  const all = ROTATIONS[key].weeks.flat();
+  Object.assign(e, { rotation: key, sets: 3, setsText: '', repMin: Math.min(...all), repMax: Math.max(...all) });
+  delete e.scheme;
+}
+
+// The doc's original rep ranges, used once to move unchanged plans onto the pyramid defaults.
+const TEMPLATE_RANGES = {};
 function ex(name, muscle, sets, repMin, repMax, o = {}) {
-  return { id: uid(), name, muscle, sets, setsText: o.setsText || '', repMin, repMax, type: o.type || 'reps', compound: !!o.compound, perSide: !!o.perSide };
+  TEMPLATE_RANGES[name.toLowerCase()] = [repMin, repMax];
+  const e = { id: uid(), name, muscle, sets, setsText: o.setsText || '', repMin, repMax, type: o.type || 'reps', compound: !!o.compound, perSide: !!o.perSide };
+  if (o.rot) setRotation(e, o.rot);
+  return e;
 }
 const DEFAULT_PROGRAM = () => [
   { id: 'push', name: 'Push', focus: 'Chest • shoulders • triceps', exercises: [
-    ex('Machine or barbell bench press', 'Chest', 3, 8, 12, { compound: true }),
-    ex('Incline dumbbell press', 'Upper chest', 3, 8, 12, { compound: true }),
-    ex('Seated chest press or cable fly', 'Choose one', 3, 10, 15, { setsText: '2–3' }),
-    ex('Seated shoulder press', 'Shoulders', 3, 8, 12, { compound: true }),
-    ex('Dumbbell lateral raise', 'Side delts', 3, 12, 15),
-    ex('Cable triceps pushdown', 'Triceps', 3, 10, 15),
-    ex('Overhead cable triceps extension', 'Triceps', 2, 10, 15),
+    ex('Machine or barbell bench press', 'Chest', 3, 8, 12, { compound: true, rot: 'c' }),
+    ex('Incline dumbbell press', 'Upper chest', 3, 8, 12, { compound: true, rot: 'c' }),
+    ex('Seated chest press or cable fly', 'Choose one', 3, 10, 15, { setsText: '2–3', rot: 'i' }),
+    ex('Seated shoulder press', 'Shoulders', 3, 8, 12, { compound: true, rot: 'c' }),
+    ex('Dumbbell lateral raise', 'Side delts', 3, 12, 15, { rot: 'i' }),
+    ex('Cable triceps pushdown', 'Triceps', 3, 10, 15, { rot: 'i' }),
+    ex('Overhead cable triceps extension', 'Triceps', 2, 10, 15, { rot: 'i' }),
   ] },
   { id: 'pull', name: 'Pull', focus: 'Back • rear delts • biceps', exercises: [
-    ex('Lat pulldown or assisted pull-up', 'Vertical pull', 3, 8, 12, { compound: true }),
-    ex('Chest-supported row', 'Upper/mid back', 3, 8, 12, { compound: true }),
-    ex('Seated cable row', 'Controlled reps', 3, 10, 12, { setsText: '2–3' }),
-    ex('Reverse pec deck or cable rear-delt fly', 'Rear delts', 3, 12, 15),
-    ex('EZ-bar or dumbbell curl', 'Biceps', 3, 8, 12),
-    ex('Hammer curl', 'Biceps/forearms', 3, 10, 15, { setsText: '2–3' }),
+    ex('Lat pulldown or assisted pull-up', 'Vertical pull', 3, 8, 12, { compound: true, rot: 'c' }),
+    ex('Chest-supported row', 'Upper/mid back', 3, 8, 12, { compound: true, rot: 'c' }),
+    ex('Seated cable row', 'Controlled reps', 3, 10, 12, { setsText: '2–3', rot: 'c' }),
+    ex('Reverse pec deck or cable rear-delt fly', 'Rear delts', 3, 12, 15, { rot: 'i' }),
+    ex('EZ-bar or dumbbell curl', 'Biceps', 3, 8, 12, { rot: 'i' }),
+    ex('Hammer curl', 'Biceps/forearms', 3, 10, 15, { setsText: '2–3', rot: 'i' }),
   ] },
   { id: 'legs', name: 'Legs + Core', focus: 'Quads • hamstrings • glutes • calves • abs', exercises: [
-    ex('Leg press or squat variation', 'Quads/glutes', 3, 8, 12, { compound: true }),
-    ex('Romanian deadlift (DB or barbell)', 'Hamstrings/glutes', 3, 8, 12, { compound: true }),
-    ex('Seated or lying leg curl', 'Hamstrings', 3, 10, 15),
-    ex('Leg extension', 'Quads', 3, 10, 15, { setsText: '2–3' }),
-    ex('Walking lunge or split squat', 'Optional if time', 2, 8, 10, { perSide: true }),
-    ex('Standing or seated calf raise', 'Calves', 3, 12, 20),
+    ex('Leg press or squat variation', 'Quads/glutes', 3, 8, 12, { compound: true, rot: 'c' }),
+    ex('Romanian deadlift (DB or barbell)', 'Hamstrings/glutes', 3, 8, 12, { compound: true, rot: 'c' }),
+    ex('Seated or lying leg curl', 'Hamstrings', 3, 10, 15, { rot: 'i' }),
+    ex('Leg extension', 'Quads', 3, 10, 15, { setsText: '2–3', rot: 'i' }),
+    ex('Walking lunge or split squat', 'Optional if time', 2, 8, 10, { perSide: true, rot: 'c' }),
+    ex('Standing or seated calf raise', 'Calves', 3, 12, 20, { rot: 'i' }),
     ex('Plank', 'Core', 3, 30, 60, { type: 'time' }),
-    ex('Cable crunch or dead bug', 'Core', 3, 10, 15, { setsText: '2–3' }),
+    ex('Cable crunch or dead bug', 'Core', 3, 10, 15, { setsText: '2–3', rot: 'i' }),
   ] },
   { id: 'bonus', name: 'Bonus', focus: 'Extra upper body • arms • optional cardio', exercises: [
-    ex('Incline dumbbell press or machine chest press', 'Moderate effort', 3, 10, 12),
-    ex('Cable row or machine row', 'Controlled reps', 3, 10, 12),
-    ex('Cable or dumbbell lateral raise', 'Shoulders', 3, 12, 15),
-    ex('Preacher curl or cable curl', 'Biceps', 3, 10, 15),
-    ex('Rope triceps pushdown', 'Triceps', 3, 10, 15),
+    ex('Incline dumbbell press or machine chest press', 'Moderate effort', 3, 10, 12, { rot: 'c' }),
+    ex('Cable row or machine row', 'Controlled reps', 3, 10, 12, { rot: 'c' }),
+    ex('Cable or dumbbell lateral raise', 'Shoulders', 3, 12, 15, { rot: 'i' }),
+    ex('Preacher curl or cable curl', 'Biceps', 3, 10, 15, { rot: 'i' }),
+    ex('Rope triceps pushdown', 'Triceps', 3, 10, 15, { rot: 'i' }),
     ex('Optional cardio', 'Easy/moderate pace', 1, 10, 20, { type: 'cardio' }),
   ] },
 ];
@@ -118,6 +144,7 @@ function defaultState() {
     },
     goalNotes: '',
     program: DEFAULT_PROGRAM(),
+    programRev: 2,
     workouts: [],
     active: null,
     body: {},   // 'YYYY-MM-DD' -> { weight, waist, bf }
@@ -134,10 +161,30 @@ function load() {
     if (!raw) return defaultState();
     const s = JSON.parse(raw);
     const d = defaultState();
-    return { ...d, ...s, settings: { ...d.settings, ...(s.settings || {}) } };
+    return migrate({ ...d, ...s, settings: { ...d.settings, ...(s.settings || {}) } }, s.programRev || 1);
   } catch (e) {
     return defaultState();
   }
+}
+/** Plan revision 2: weekly rotating pyramids become the default for exercises still on the doc's rep ranges. */
+function migrate(st, savedRev) {
+  if (savedRev >= 2) return st;
+  try { migrateToPyramids(st); } catch (e) { /* never lose data over a plan update */ }
+  st.programRev = 2;
+  return st;
+}
+function migrateToPyramids(st) {
+  const defaults = new Map(DEFAULT_PROGRAM().flatMap((d) => d.exercises).map((e) => [keyOf(e.name), e]));
+  let changed = 0;
+  for (const day of st.program || []) for (const e of day.exercises) {
+    const def = defaults.get(keyOf(e.name));
+    const orig = TEMPLATE_RANGES[keyOf(e.name)];
+    if (!def?.rotation || e.type !== 'reps' || e.scheme || e.rotation || !orig) continue;
+    if (e.repMin !== orig[0] || e.repMax !== orig[1]) continue; // you changed it: leave it alone
+    setRotation(e, def.rotation);
+    changed++;
+  }
+  if (changed) st.migratedNote = true;
 }
 let S = load();
 let storageOk = true;
@@ -166,21 +213,24 @@ let rest = null; // { end, total, name }
 // ---------- domain logic ----------
 const unit = () => S.settings.unit;
 const dayById = (id) => S.program.find((d) => d.id === id);
-const keyOf = (name) => String(name || '').trim().toLowerCase();
 const finished = () => S.workouts.slice().sort((a, b) => (b.date + (b.finishedAt || 0)).localeCompare(a.date + (a.finishedAt || 0)));
 
 // Rep schemes selectable in the plan editor: ranges, fixed reps (5-5-5) and pyramids/waves (10-8-6, 3-2-1).
 const REP_CHOICES = [
   ['Rep ranges', [[5, 8], [6, 10], [8, 12], [10, 15], [12, 15], [12, 20], [15, 20]].map(([a, b]) => [`r:${a}-${b}`, `${a}–${b} reps`])],
   ['Same reps every set', [3, 5, 6, 8, 10].map((n) => [`f:${n}`, `${n} reps each set`])],
+  ['Weekly rotating pyramids (heavier each set)', Object.keys(ROTATIONS).map((k) => [`rot:${k}`, `${ROTATIONS[k].label}: ${rotationText(k)}`])],
   ['Pyramids & waves (heavier each set)', [[12, 10, 8], [10, 8, 6], [8, 6, 4], [5, 3, 1], [3, 2, 1]].map((a) => [`p:${a.join('-')}`, `${a.join(' / ')}`])],
 ];
 function repChoiceOf(e) {
+  if (e.rotation) return `rot:${e.rotation}`;
   if (Array.isArray(e.scheme) && e.scheme.length > 1) return `p:${e.scheme.join('-')}`;
   return e.repMin === e.repMax ? `f:${e.repMin}` : `r:${e.repMin}-${e.repMax}`;
 }
 function applyRepChoice(e, v) {
   const [kind, body] = v.split(':');
+  if (kind === 'rot') return setRotation(e, body);
+  delete e.rotation;
   const nums = body.split('-').map(Number);
   if (kind === 'p') { e.scheme = nums; e.sets = nums.length; e.repMin = Math.min(...nums); e.repMax = Math.max(...nums); }
   else { delete e.scheme; e.repMin = nums[0]; e.repMax = nums[1] ?? nums[0]; }
@@ -189,7 +239,8 @@ function applyRepChoice(e, v) {
 
 function targetText(e) {
   if (e.type === 'cardio') return `${e.repMin}–${e.repMax} min`;
-  if (Array.isArray(e.scheme) && e.scheme.length > 1) return `${e.scheme.join(' / ')} reps, heavier each set`;
+  if (Array.isArray(e.scheme) && e.scheme.length > 1) return `${e.scheme.join(' / ')} reps, heavier each set${e.rotation ? ' (changes weekly)' : ''}`;
+  if (e.rotation && ROTATIONS[e.rotation]) return `Weekly pyramid ${rotationText(e.rotation)}`;
   const sets = e.setsText || e.sets;
   const reps = e.repMin === e.repMax ? `${e.repMin}` : `${e.repMin}–${e.repMax}`;
   return `${sets} × ${reps}${e.type === 'time' ? ' sec' : ''}${e.perSide ? '/leg' : ''}`;
@@ -248,10 +299,11 @@ function newWorkoutFromDay(dayId) {
   return w;
 }
 function logExercise(e, deload = false) {
-  const n = deload && e.type === 'reps' && !e.scheme ? Math.max(1, e.sets - 1) : e.sets;
+  const scheme = e.type === 'reps' ? schemeForWeek(e) : null;
+  const n = scheme ? scheme.length : deload && e.type === 'reps' ? Math.max(1, e.sets - 1) : e.sets;
   return {
     uid: uid(), name: e.name, base: e.name, muscle: e.muscle, sets: Array.from({ length: n }, () => ({ w: '', r: '', done: false })), rir: null, reset: false,
-    targetSets: e.sets, setsText: e.setsText, repMin: e.repMin, repMax: e.repMax, scheme: e.scheme ? [...e.scheme] : null, type: e.type, compound: e.compound, perSide: e.perSide,
+    targetSets: scheme ? scheme.length : e.sets, setsText: e.setsText, repMin: e.repMin, repMax: e.repMax, scheme, rotation: e.rotation || null, type: e.type, compound: e.compound, perSide: e.perSide,
   };
 }
 const asTemplate = (le) => ({ ...le, sets: le.targetSets });
@@ -827,7 +879,7 @@ function planEditor(day) {
         <button class="icon-btn" data-a="prog-up" data-i="${i}" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button>
         <button class="icon-btn" data-a="prog-del" data-i="${i}" aria-label="Delete">✕</button></div>
       <div class="grid3" style="margin-top:6px;grid-template-columns:repeat(4,1fr)">
-        ${field('Sets', `<select data-in="prog" data-d="${esc(day.id)}" data-i="${i}" data-f="sets" ${e.scheme ? 'disabled' : ''}>${[1, 2, 3, 4, 5, 6].map((n) => `<option ${e.sets === n ? 'selected' : ''}>${n}</option>`).join('')}</select>`)}
+        ${field('Sets', `<select data-in="prog" data-d="${esc(day.id)}" data-i="${i}" data-f="sets" ${e.scheme || e.rotation ? 'disabled' : ''}>${[1, 2, 3, 4, 5, 6].map((n) => `<option ${e.sets === n ? 'selected' : ''}>${n}</option>`).join('')}</select>`)}
         ${e.type === 'reps' ? `<div style="grid-column:span 2">${field('Reps', repSelect(day, e, i))}</div>` : `
         ${field(e.type === 'time' ? 'Min sec' : 'Min min', `<input type="number" data-in="prog" data-d="${esc(day.id)}" data-i="${i}" data-f="repMin" value="${e.repMin}">`)}
         ${field(e.type === 'time' ? 'Max sec' : 'Max min', `<input type="number" data-in="prog" data-d="${esc(day.id)}" data-i="${i}" data-f="repMax" value="${e.repMax}">`)}`}
@@ -1158,7 +1210,7 @@ function onField(ev) {
     if (f === 'reps') applyRepChoice(e, val);
     else e[f] = ['sets', 'repMin', 'repMax'].includes(f) ? Math.max(1, Math.round(num(val) || 1)) : val;
     if (f === 'sets') e.setsText = '';
-    if (f === 'type' && val !== 'reps') delete e.scheme;
+    if (f === 'type' && val !== 'reps') { delete e.scheme; delete e.rotation; }
   }
   save();
   if (ev.type === 'change' && (kind === 'setting' && f === 'unit' || kind === 'prog' && ['type', 'reps'].includes(f))) render();
@@ -1195,6 +1247,10 @@ document.addEventListener('visibilitychange', () => {
 
 if (S.active) ui.tab = 'train';
 render();
+if (S.migratedNote) {
+  delete S.migratedNote; save();
+  toast('Your plan now uses weekly pyramids. Change any exercise in Plan → Workout menu.');
+}
 
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   // Pick up new versions automatically: check for updates on launch and whenever the app comes back
