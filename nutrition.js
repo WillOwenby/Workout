@@ -345,6 +345,7 @@ function viewDiary() {
     ${macroRow('Protein', t.p, st.proteinGoal, 'var(--protein)')}
     ${macroRow('Carbs', t.c, st.carbGoal, 'var(--carbs)')}
     ${macroRow('Fat', t.f, st.fatGoal, 'var(--fat)')}
+    ${proteinIdeas(d, t)}
     <button class="btn primary block" style="margin-top:12px" data-a="food-open" data-meal="${defaultMeal()}">Search & add food</button>
   </div>
 
