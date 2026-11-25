@@ -52,7 +52,7 @@ function exHistory(name, excludeId, beforeDate) {
     const sets = e.sets.filter((s) => s.done && (num(s.w) != null || num(s.r) != null));
     if (!sets.length) continue;
     const best = Math.max(0, ...sets.map((s) => e1rm(num(s.w), num(s.r))));
-    out.push({ date: w.date, sets, best, rir: e.rir ?? null, reset: !!e.reset, deload: !!w.deload, nextTime: w.nextTime || [] });
+    out.push({ date: w.date, sets, best, rir: e.rir ?? null, reset: !!e.reset, deload: !!w.deload, nextTime: w.nextTime || [], scheme: e.scheme || null });
   }
   return out;
 }
@@ -71,10 +71,12 @@ function exStatus(e, hist) {
   const h = hist.filter((x) => !x.deload);
   if (!h.length) return 'new';
   if (e.type !== 'reps') return h.length > 1 && h[0].best > h[1].best ? 'up' : 'hold';
+  // Judge each session against the targets it actually had (rotating pyramids change weekly).
   const below = (x) => x.sets.some((s, j) => {
     const r = num(s.r);
     if (r == null) return false;
-    return isScheme(e) ? j < e.scheme.length && r < e.scheme[j] - 1 : r < e.repMin;
+    const sch = isScheme(x) ? x.scheme : isScheme(e) ? e.scheme : null;
+    return sch ? j < sch.length && r < sch[j] - 1 : r < e.repMin;
   });
   if (h.length >= 2 && below(h[0]) && below(h[1]) && !h[0].reset) return 'down';
   // Only sessions since the last lighter restart count toward a stall.
@@ -110,8 +112,8 @@ function progressionFor(e, w) {
     return res({ text: scheme ? `First time: start light and go heavier each set (${scheme.join(' / ')} reps), last set hardest.` : 'First time: pick a weight you can do with good form and stop at the effort target.' });
   }
 
-  const when = fmtDate(prior.date, { month: 'short', day: 'numeric' });
-  const lastLine = `Last ${when}: ${prior.sets.map((s) => fmtSet(s, tmpl)).join(', ')}${prior.rir != null ? ` · ${prior.rir >= 3 ? '3+' : prior.rir} left` : ''}`;
+  const describe = (x) => `Last ${fmtDate(x.date, { month: 'short', day: 'numeric' })}: ${x.sets.map((s) => fmtSet(s, tmpl)).join(', ')}${x.rir != null ? ` · ${x.rir >= 3 ? '3+' : x.rir} left` : ''}`;
+  let lastLine = describe(prior);
   const R = (o) => res({ last: lastLine, ...o });
   const n = Math.max(e.sets.length, tmpl.sets);
   const fill = (wt, r) => Array.from({ length: n }, () => ({ w: wt, r }));
@@ -135,20 +137,40 @@ function progressionFor(e, w) {
 
   // ----- Pyramid / wave: a rep target for each set, heavier each set -----
   if (scheme) {
-    const wAt = (j) => num(prior.sets[j]?.w) ?? num(prior.sets.at(-1)?.w) ?? 0;
-    const per = (fn) => scheme.map((t, j) => ({ w: fn(wAt(j)), r: t }));
     const label = scheme.join(' / ');
-    if (w.deload) return R({ status: 'deload', text: `Lighter week: about 90% on each set, stop well short of failure.`, perSet: per((x) => floorTo(x * DELOAD_PCT, inc)) });
-    if (e.reset) return R({ status: 'stalled', canReset: true, text: `Lighter restart: about 90% on each set, then build back up.`, perSet: per((x) => floorTo(x * DELOAD_PCT, inc)) });
-    const hitAll = scheme.every((t, j) => (num(prior.sets[j]?.r) ?? 0) >= t);
-    if (nt.includes('Increase weight') || hitAll) {
-      const k = !nt.includes('Increase weight') && spare >= 2 ? 2 : 1;
-      const why = nt.includes('Increase weight') ? 'You chose “Increase weight”' : k === 2 ? `Hit ${label} with reps to spare` : `Hit ${label}`;
-      return R({ status: 'up', good: true, text: `${why} — add ${r1(inc * k)} ${U} to each set.${adjust}`, perSet: per((x) => r1(x + inc * k)) });
+    const key = scheme.join('-');
+    // Weights come from the last time you ran this same pyramid.
+    const same = hist.find((x) => !x.deload && isScheme(x) && x.scheme.join('-') === key);
+    if (!same) {
+      // New pyramid for you (or this week's rotation): estimate each set from the last session's sets.
+      // Count the reps that were left in the tank (logged, or that week's target) so lower-rep weeks get heavier.
+      const left = prior.rir != null ? prior.rir : rirTarget(prior.date, prior.deload);
+      const est = scheme.map((t, j) => {
+        const s = prior.sets[Math.min(j, prior.sets.length - 1)];
+        const e1 = e1rm(num(s?.w), (num(s?.r) || 0) + left);
+        return e1 ? floorTo(e1 / (1 + (t + tgt) / 30), inc) : '';
+      });
+      if (est.every((x) => x === '')) return R({ text: `New pyramid (${label}): start light and go heavier each set.` });
+      for (let j = 1; j < est.length; j++) if (est[j] !== '' && est[j - 1] !== '' && est[j] < est[j - 1]) est[j] = est[j - 1];
+      const k = w.deload ? DELOAD_PCT : 1;
+      return R({ status: w.deload ? 'deload' : status, text: `New this week: ${label}. Weights estimated from your last session${w.deload ? ', then about 90% for the lighter week' : ''} — adjust to hit the effort target.`, perSet: scheme.map((t, j) => ({ w: est[j] === '' ? '' : floorTo(est[j] * k, inc) || est[j], r: t })) });
+    }
+    lastLine = describe(same);
+    const sameRir = same.rir == null ? 0 : rirValue(same.rir) - rirTarget(same.date, same.deload);
+    const snt = same.nextTime;
+    const wAt = (j) => num(same.sets[j]?.w) ?? num(same.sets.at(-1)?.w) ?? 0;
+    const per = (fn) => scheme.map((t, j) => ({ w: fn(wAt(j)), r: t }));
+    if (w.deload) return R({ status: 'deload', text: 'Lighter week: about 90% on each set, stop well short of failure.', perSet: per((x) => floorTo(x * DELOAD_PCT, inc)) });
+    if (e.reset) return R({ status: 'stalled', canReset: true, text: 'Lighter restart: about 90% on each set, then build back up.', perSet: per((x) => floorTo(x * DELOAD_PCT, inc)) });
+    const hitAll = scheme.every((t, j) => (num(same.sets[j]?.r) ?? 0) >= t);
+    if (snt.includes('Increase weight') || hitAll) {
+      const kk = !snt.includes('Increase weight') && sameRir >= 2 ? 2 : 1;
+      const why = snt.includes('Increase weight') ? 'You chose “Increase weight”' : kk === 2 ? `Hit ${label} with reps to spare` : `Hit ${label} last time`;
+      return R({ status: 'up', good: true, text: `${why} — add ${r1(inc * kk)} ${U} to each set.${adjust}`, perSet: per((x) => r1(x + inc * kk)) });
     }
     if (status === 'down') return R({ text: `Missed the targets twice — drop each set about 7.5% and rebuild.${adjust}`, perSet: per((x) => floorTo(x * BACKOFF_PCT, inc)) });
     if (status === 'stalled') return R({ canReset: true, text: `No progress in ${STALL_SESSIONS} sessions — keep at it or tap “Lighter restart”.${adjust}`, perSet: per((x) => x) });
-    return R({ text: `Same weights — hit ${label}.${adjust}`, perSet: per((x) => x) });
+    return R({ text: `Same weights as last time on ${label} — hit every set.${adjust}`, perSet: per((x) => x) });
   }
 
   // ----- Straight sets: a rep range (8–12) or fixed reps (5-5-5) -----

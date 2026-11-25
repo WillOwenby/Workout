@@ -18,6 +18,7 @@ It's a plain HTML/CSS/JS web app with no build step and no account. Your data st
     - **Status tags** on each exercise: ↑ Progressing, → Holding, ⚠ Stalled, ↓ Back off.
     - **Weekly effort target** (reps in reserve: 3, 2, 1 across the 4-week cycle) on every exercise. The one-tap effort check is compared with it: more reps left than targeted means a bigger jump or +2 reps.
     - **Rep schemes picked from a dropdown** in the plan editor: ranges (8–12…), the same reps every set (5-5-5…), or pyramids and waves (10/8/6, 3/2/1). Each has its own progression rule.
+    - **Weekly rotating pyramids are the default:** big lifts go 12/10/8 → 10/8/6 → 8/6/4 across Weeks 1–3 (Week 4 repeats Week 1). Smaller lifts go 15/12/10 → 12/10/8 → 10/8/6. Each pyramid's weights come from the last time you ran that same pyramid: hit every set and the next one adds a jump to each set. A pyramid you haven't done yet is estimated from your recent sets. Plank and cardio keep their time/minute targets.
     - **Form cues:** tap an exercise name to show two short pointers.
     - **Warm-up ramp** (about 50% × 8, 70% × 5, 85% × 2) on the first big lift of each workout.
   - Tap ✓ to finish a set. Any empty box is filled in from the suggestion.
