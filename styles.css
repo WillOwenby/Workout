@@ -318,3 +318,15 @@ select.variant { margin-top: 10px; width: 100%; min-height: 36px; padding: 6px 3
 .hint-target { font-size: 12px; color: var(--muted); margin-top: 4px; }
 .cue-i { font-size: 13px; color: var(--muted); font-weight: 400; }
 .cues { font-size: 13px; margin: 6px 0 2px; padding: 8px 10px; border-left: 3px solid var(--accent); background: var(--surface-2); border-radius: 0 8px 8px 0; }
+
+/* Coach */
+.card.coach { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.coach-slim { padding: 10px 14px; }
+.feel { justify-content: space-between; flex-wrap: wrap; gap: 6px; }
+.feel .chip { padding: 5px 12px; }
+.protein-ideas { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.muscle-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 4px; }
+.mg { background: var(--surface-2); border-radius: 10px; padding: 6px 8px; display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; font-size: 12px; }
+.mg span:first-child { flex-basis: 100%; color: var(--muted); }
+.mg b { font-size: 18px; }
+.mg.zero b { color: var(--muted); }

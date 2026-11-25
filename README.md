@@ -40,6 +40,14 @@ It's a plain HTML/CSS/JS web app with no build step and no account. Your data st
 - **Progress**: a calendar of the days you trained, weighed in and logged food; strength charts for each exercise; and your full workout history (open, edit, repeat or delete any workout).
 - **Plan**: the weekly schedule, an editable workout menu, how-to and progression notes, exercise swaps, baseline weights/machine settings, goals and settings, plus JSON backup/restore and a CSV export.
 
+## Coach features
+
+- **Weekly check-in** (Today): once you have about 2 weeks of food logs and weigh-ins, the app estimates your real maintenance calories from your weight trend and what you ate. It then suggests a new calorie and macro goal for your target rate, changing by at most 250 kcal a week. Tap **Apply** or **Not now**.
+- **Workout summary** after finishing: PRs, lifts that went up, volume compared with last time, and one focus for next time (for example, try an alternative for a stalled lift).
+- **"How do you feel?"** in the workout header: *Rough* keeps last time's weights and adds a rep in reserve, while *Great* allows two jumps on lifts you nailed.
+- **Protein ideas** in Diet when you're 20+ g short later in the day. Tap to add.
+- **Sets per muscle** this week (and last week) in Progress, plus which planned muscles you haven't trained yet.
+
 ## Run it
 
 Open `index.html` in a browser, or serve the folder:

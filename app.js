@@ -6,7 +6,7 @@
    ========================================================================= */
 
 const STORE_KEY = 'liftlog.v1';
-const APP_VERSION = '1.7 (Nov 25, 2026)';
+const APP_VERSION = '1.8 (Nov 25, 2026)';
 
 // ---------- helpers ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -153,6 +153,7 @@ function defaultState() {
     foods: [],  // My foods (custom / saved)
     meals: [],  // saved meals: { id, name, items: [entries] }
     profile: {}, // calorie calculator inputs
+    checkins: [], // weekly check-ins: { date, tdee, intake, rate, applied }
   };
 }
 function load() {
@@ -206,7 +207,8 @@ const ui = {
   editPlan: false,
   openWorkout: null,
   cues: {},        // exercise uids with form cues expanded
-  exSearch: null,   // quick exercise search: { mode: 'add' | 'swap', i, q, group }
+  exSearch: null,
+  summary: null,    // id of a just-finished workout to summarise   // quick exercise search: { mode: 'add' | 'swap', i, q, group }
 };
 let rest = null; // { end, total, name }
 
@@ -292,7 +294,7 @@ function newWorkoutFromDay(dayId) {
   const d = dayById(dayId);
   const deload = deloadActive(today());
   const w = {
-    id: uid(), dayId: d.id, name: d.name, date: today(), startedAt: Date.now(), deload,
+    id: uid(), dayId: d.id, name: d.name, date: today(), startedAt: Date.now(), deload, feel: 'normal',
     exercises: d.exercises.map((e) => logExercise(e, deload)),
     notes: '', nextTime: [], effort: null, pain: '', bodyweight: S.body[today()]?.weight ?? '',
   };
@@ -453,6 +455,7 @@ function viewToday() {
 
   return `
   ${hero}
+  ${checkinCard()}
   <div class="card">
     <div class="row between"><h2>This week</h2><span class="small muted">${weekCount} workout${weekCount === 1 ? '' : 's'}</span></div>
     <div class="week-dots">${week.map((d) => {
@@ -535,6 +538,8 @@ function viewLogger() {
       ${field('Date', `<input type="date" data-in="active" data-f="date" value="${esc(w.date)}">`)}
       ${field(`Bodyweight (${unit()})`, `<input type="number" inputmode="decimal" step="0.1" data-in="active" data-f="bodyweight" value="${esc(w.bodyweight)}" placeholder="optional">`)}
     </div>
+    <div class="feel row" style="margin-top:10px"><span class="small muted">How do you feel?</span>
+      <div class="chips">${[['great', 'Great'], ['normal', 'Normal'], ['rough', 'Rough']].map(([v, l]) => `<button class="chip ${(w.feel || 'normal') === v ? 'on' : ''}" data-a="feel" data-v="${v}">${l}</button>`).join('')}</div></div>
     <p class="tiny muted" style="margin:10px 0 0">Warm up 5–8 min and do lighter warm-up sets first. Log working sets. Tap ✓ to complete a set — empty boxes fill from the suggestion.</p>
   </div>
 
@@ -604,7 +609,7 @@ function exerciseCard(w, e, i) {
         </tr>`;
       }).join('')}</tbody>
     </table>
-    ${rirPicker(e, i, e.type === 'reps' ? rirTarget(w.date, w.deload) : null)}
+    ${rirPicker(e, i, e.type === 'reps' ? sessionRir(w) : null)}
     <div class="row"><button class="btn sm grow" data-a="set-add" data-i="${i}">+ Add set</button><button class="btn sm grow" data-a="set-remove" data-i="${i}" ${e.sets.length <= 1 ? 'disabled' : ''}>− Remove set</button></div>
   </div>`;
 }
@@ -671,6 +676,7 @@ function viewHistory() {
   if (!ui.progEx || !names.includes(ui.progEx)) ui.progEx = names[0] || '';
   return `
   ${viewCalendar()}
+  ${muscleSetsCard()}
 
   <div class="card">
     <h2>Exercise progress</h2>
@@ -902,7 +908,7 @@ function render() {
   const y = window.scrollY;
   let html;
   if (ui.tab === 'today') html = viewToday();
-  else if (ui.tab === 'train') html = S.active ? viewLogger() : viewTrainPicker();
+  else if (ui.tab === 'train') html = ui.summary ? viewSummary(ui.summary) : S.active ? viewLogger() : viewTrainPicker();
   else if (ui.tab === 'diet') html = viewDiet();
   else if (ui.tab === 'body') html = viewBody();
   else if (ui.tab === 'history') html = viewHistory();
@@ -916,6 +922,7 @@ function render() {
 }
 function go(tab) {
   ui.exSearch = null;
+  if (tab !== 'train') ui.summary = null;
   if (tab === 'diet' || ui.tab === 'diet') resetDietView();
   ui.tab = tab; render(); window.scrollTo(0, 0);
 }
@@ -1062,7 +1069,8 @@ const actions = {
     save();
     ui.openWorkout = w.id;
     ui.calSel = w.date; ui.calMonth = w.date.slice(0, 7);
-    go('history');
+    ui.summary = w.id;
+    go('train');
     toast(w.prs.length ? `Workout saved — ${w.prs.length} new PR${w.prs.length > 1 ? 's' : ''}! 🎉` : 'Workout saved 💪');
   },
   discard() {
@@ -1081,6 +1089,7 @@ const actions = {
   ...nutritionActions,
   ...progressionActions,
   ...exerciseActions,
+  ...coachActions,
   cues(d) { ui.cues[d.u] = !ui.cues[d.u]; render(); },
 
   // body

@@ -62,6 +62,8 @@ function rirTarget(date, deload) {
   if (deload) return 3;
   return [3, 2, 1, 1][cycleInfo(date).week - 1];
 }
+/** Today's target for a workout: one more rep in reserve when you're feeling rough. */
+const sessionRir = (w) => rirTarget(w.date, w.deload) + (w.feel === 'rough' && !w.deload ? 1 : 0);
 /** "3+" is recorded as 3; treat it as 4 when comparing with the target. */
 const rirValue = (r) => (r >= 3 ? 4 : r);
 const isScheme = (e) => Array.isArray(e.scheme) && e.scheme.length > 1;
@@ -99,14 +101,26 @@ function exStatus(e, hist) {
  *   target – this week's effort target (rep-based exercises only)
  */
 function progressionFor(e, w) {
+  const r = progressionCore(e, w);
+  // Feeling rough: no weight increases today, repeat the weights from last time.
+  if (w.feel === 'rough' && r.status === 'up' && r.src) {
+    const sch = Array.isArray(e.scheme) && e.scheme.length > 1 ? e.scheme : null;
+    r.perSet = r.perSet.map((p, j) => { const s = r.src.sets[Math.min(j, r.src.sets.length - 1)]; return { w: s.w, r: sch ? sch[j] : num(s.r) ?? p.r }; });
+    r.text = 'Feeling rough — repeat last time’s weights today. You can go up next session.';
+    r.status = 'hold'; r.good = false;
+  }
+  return r;
+}
+function progressionCore(e, w) {
   const tmpl = { ...e, sets: e.targetSets ?? e.sets.length };
   const hist = exHistory(e.name, w.id, w.date);
   const status = exStatus(tmpl, hist);
   const inc = incFor(tmpl);
-  const tgt = tmpl.type === 'reps' ? rirTarget(w.date, w.deload) : null;
-  const target = tgt == null ? '' : `Effort: stop about ${tgt} rep${tgt === 1 ? '' : 's'} short of failure${w.deload ? ' (lighter week)' : ` (Week ${cycleInfo(w.date).week})`}.`;
+  const tgt = tmpl.type === 'reps' ? sessionRir(w) : null;
+  const great = w.feel === 'great';
+  const target = tgt == null ? '' : `Effort: stop about ${tgt} rep${tgt === 1 ? '' : 's'} short of failure${w.deload ? ' (lighter week)' : w.feel === 'rough' ? ' (feeling rough: one extra in reserve)' : ` (Week ${cycleInfo(w.date).week})`}.`;
   const prior = hist.find((x) => !x.deload) || hist[0];
-  const res = (o) => ({ status, canReset: false, inc, good: false, perSet: [], last: '', target, ...o });
+  const res = (o) => ({ status, canReset: false, inc, good: false, perSet: [], last: '', target, src: null, ...o });
   const scheme = isScheme(tmpl) ? tmpl.scheme : null;
   if (!prior) {
     return res({ text: scheme ? `First time: start light and go heavier each set (${scheme.join(' / ')} reps), last set hardest.` : 'First time: pick a weight you can do with good form and stop at the effort target.' });
@@ -114,7 +128,8 @@ function progressionFor(e, w) {
 
   const describe = (x) => `Last ${fmtDate(x.date, { month: 'short', day: 'numeric' })}: ${x.sets.map((s) => fmtSet(s, tmpl)).join(', ')}${x.rir != null ? ` · ${x.rir >= 3 ? '3+' : x.rir} left` : ''}`;
   let lastLine = describe(prior);
-  const R = (o) => res({ last: lastLine, ...o });
+  let src = prior;
+  const R = (o) => res({ last: lastLine, src, ...o });
   const n = Math.max(e.sets.length, tmpl.sets);
   const fill = (wt, r) => Array.from({ length: n }, () => ({ w: wt, r }));
   const ws = prior.sets.map((s) => num(s.w));
@@ -156,6 +171,7 @@ function progressionFor(e, w) {
       return R({ status: w.deload ? 'deload' : status, text: `New this week: ${label}. Weights estimated from your last session${w.deload ? ', then about 90% for the lighter week' : ''} — adjust to hit the effort target.`, perSet: scheme.map((t, j) => ({ w: est[j] === '' ? '' : floorTo(est[j] * k, inc) || est[j], r: t })) });
     }
     lastLine = describe(same);
+    src = same;
     const sameRir = same.rir == null ? 0 : rirValue(same.rir) - rirTarget(same.date, same.deload);
     const snt = same.nextTime;
     const wAt = (j) => num(same.sets[j]?.w) ?? num(same.sets.at(-1)?.w) ?? 0;
@@ -164,8 +180,8 @@ function progressionFor(e, w) {
     if (e.reset) return R({ status: 'stalled', canReset: true, text: 'Lighter restart: about 90% on each set, then build back up.', perSet: per((x) => floorTo(x * DELOAD_PCT, inc)) });
     const hitAll = scheme.every((t, j) => (num(same.sets[j]?.r) ?? 0) >= t);
     if (snt.includes('Increase weight') || hitAll) {
-      const kk = !snt.includes('Increase weight') && sameRir >= 2 ? 2 : 1;
-      const why = snt.includes('Increase weight') ? 'You chose “Increase weight”' : kk === 2 ? `Hit ${label} with reps to spare` : `Hit ${label} last time`;
+      const kk = !snt.includes('Increase weight') && (sameRir >= 2 || great) ? 2 : 1;
+      const why = snt.includes('Increase weight') ? 'You chose “Increase weight”' : kk === 2 ? (great && sameRir < 2 ? `Hit ${label} and feeling great` : `Hit ${label} with reps to spare`) : `Hit ${label} last time`;
       return R({ status: 'up', good: true, text: `${why} — add ${r1(inc * kk)} ${U} to each set.${adjust}`, perSet: per((x) => r1(x + inc * kk)) });
     }
     if (status === 'down') return R({ text: `Missed the targets twice — drop each set about 7.5% and rebuild.${adjust}`, perSet: per((x) => floorTo(x * BACKOFF_PCT, inc)) });
@@ -203,8 +219,8 @@ function progressionFor(e, w) {
     return R({ text: `Under ${tmpl.repMin} reps twice in a row — drop to ${bw} ${U} and rebuild.${adjust}`, perSet: fill(bw, tmpl.repMin) });
   }
   if (allTop && W > 0) {
-    const k = spare >= 2 ? 2 : 1;
-    const why = k === 2 ? `Hit ${fixed ? 'every rep' : 'the top of the range'} with ${prior.rir >= 3 ? '3+' : prior.rir} left (target ${priorTgt})` : fixed ? 'Hit every rep' : 'Top of the range on every set';
+    const k = spare >= 2 || great ? 2 : 1;
+    const why = k === 2 && spare < 2 ? `${fixed ? 'Hit every rep' : 'Top of the range'} and feeling great` : k === 2 ? `Hit ${fixed ? 'every rep' : 'the top of the range'} with ${prior.rir >= 3 ? '3+' : prior.rir} left (target ${priorTgt})` : fixed ? 'Hit every rep' : 'Top of the range on every set';
     return R({ status: 'up', good: true, text: `${why} — go up to ${up(k)} ${U}.${adjust}`, perSet: fill(up(k), tmpl.repMin) });
   }
   if (status === 'stalled') {
